@@ -168,6 +168,8 @@ class SimdC:
                 return self.misc2(w)
             if not (op1 & 2) and (op2 & 7) == 6 and (op3 & 0b110000011) == 0b10:
                 return self.across(w)
+            if not (op1 & 2) and (op2 & 7) == 7 and (op3 & 0b110000011) == 0b10:
+                return self.misc2_fp16(w)
             if op1 == 2 and op2 == 0 and (op3 & 1):
                 return self.modimm(w)
             if op1 == 2 and op2 and (op3 & 1):
@@ -675,6 +677,17 @@ class SimdC:
                 return f'{SET}({d}, {"rsqrte" if U else "recpe"}_{F}(c, {SF}({n})));'
             return VWr(VT, Q, d, f'v{"rsqrte" if U else "recpe"}_{F}(c, {x})')
         raise Unsupported('fp misc opcode')
+
+    def misc2_fp16(self, w):
+        """Advanced SIMD two-register miscellaneous (FP16), op2 1111. FABS and FNEG only so far: the game's SDK
+        uses FNEG on eight half-precision lanes, which the 32- and 64-bit lowering cannot express."""
+        Q, U, opc, n, d = bits(w, 30, 1), bits(w, 29, 1), bits(w, 12, 5), bits(w, 5, 5), bits(w, 0, 5)
+        if opc == 0b01111:  # FABS / FNEG: bit 15 of each half-precision lane
+            if Q:
+                m = '(((u128)0x8000800080008000ull << 64) | (u128)0x8000800080008000ull)'
+                return f'c->v[{d}] = c->v[{d}] {"^" if U else "& ~"}{m};'
+            return f'c->v[{d}] = (u128)((uint64_t)c->v[{d}] {"^" if U else "& ~"} 0x8000800080008000ull);'
+        raise Unsupported(f'fp16 misc {w:08x}')
 
     # ------------------------------------------------------------ across lanes / pairwise
 

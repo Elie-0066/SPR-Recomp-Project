@@ -703,6 +703,10 @@ class Lifter:
                     return Insn('op', self.sc.crc(w))
                 gprs = [(p, r) for p, r in ((0, rd), (5, rn), (16, rm)) if r != 31]
                 return Insn('asm', asm=AsmInsn(w, set(), gprs))
+            if opcode == 12 and sf:
+                # PACGA: a keyed 64-bit hash of Rn and Rm. The host never signs or authenticates pointers and the
+                # guest only compares hashes it computed itself, so a constant is consistent on both sides.
+                return Insn('op', set_reg(1, rd, '0'))
             a, b = R(sf, rn), R(sf, rm)
             expr = {
                 2: f'udiv{size}({a}, {b})',
