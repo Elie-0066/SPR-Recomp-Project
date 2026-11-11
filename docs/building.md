@@ -126,6 +126,23 @@ of them.
 Settings live in `totk.ini` next to `totk.exe` ([totk.ini.example](../totk.ini.example) lists them). Saves go to
 `build\profile` for `v121` and `build\profile-<ver>` for other versions (`build_game.py --profile` changes it).
 
+### Splatoon Raiders
+
+Splatoon Raiders needs no extraction step: `recomp/gen.py` reads the NSO files of an ExeFS directory in place. The
+`raiders` target has its own executable name (`raiders.exe`) and no patch sets, and without
+`tools/data/expected-raiders.json` it records the SHA-256 of the ExeFS it was built from, so `raiders.exe` still
+refuses to boot a different dump:
+
+```powershell
+.venv\Scripts\python recomp\gen.py --exefs "<dump>\updates\65536\exefs" --out generated\raiders
+.venv\Scripts\python tools\build_game.py --version raiders --exefs "<dump>\updates\65536\exefs" --romfs "<dump>\updates\65536\romfs"
+```
+
+`main`, `sdk` and `subsdk0` lift to 1.1 GB of C in about two and a half minutes; the clean compile takes longer than
+DKB's. The RomFS needs `index.json` and `romfs.bin` (a packed image) as on the TotK path, so a dump without them builds
+with a warning and boots without assets. `--display` names the build in the settings menu; `--exe` renames the
+executable.
+
 ### Portable folder
 
 `.venv\Scripts\python tools\package_build.py --version <ver>` writes `build\<ver>-portable`, which runs on another of

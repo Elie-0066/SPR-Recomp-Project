@@ -1,4 +1,4 @@
-"""Compile the generated C for one game version and link it with the runtime into build/<version>/totk.exe.
+"""Compile the generated C for one game version and link it with the runtime into build/<version>/<game>.exe.
 
 Writes build/<version>/build.ninja and runs MSYS2 UCRT64 Ninja on it. Ninja keeps the build incremental: a chunk is
 recompiled only when it, a header it includes or its flags change.
@@ -16,10 +16,10 @@ first (rpath $ORIGIN). docs/building.md lists the packages.
         --out build/v121-llvmmingw                                    # llvm-mingw instead of MSYS2 UCRT64
 
 Every runtime/*.c is compiled. build/<version>/modules.c carries the layout, the linked function tables, the
-expected SHA-256 of each ExeFS file (tools/data/expected-<display version>.json) and the default game paths
-(--exefs, --romfs, --profile), which totk.exe uses unless its own command line names others. tools/romfs_index.py
-writes build/<version>/romfs-index.bin and romfs_config.h from the RomFS directory's index.json (runtime/romfs.c reads
-the index next to totk.exe).
+expected SHA-256 of each ExeFS file (tools/data/expected-<display version>.json, or the files of --exefs when a target
+has none, as a dump read in place does) and the default game paths (--exefs, --romfs, --profile), which the executable
+uses unless its own command line names others. tools/romfs_index.py writes build/<version>/romfs-index.bin and
+romfs_config.h from the RomFS directory's index.json (runtime/romfs.c reads the index next to the executable).
 
 Private builds reuse the main build's objects. When --out differs from build/<version>, the main build's generated
 objects are up to date (checked with a dry run of its build.ninja) and every header they include from runtime/ is
@@ -81,6 +81,9 @@ ROOT = Path(__file__).resolve().parent.parent
 MAIN_ROOT = (ROOT / 'build').resolve().parent
 UCRT = Path(r'C:\msys64\ucrt64\bin')
 EXE = 'dkb.exe' if WIN else 'dkb'   # DKB Recomp: not TotK's executable
+# A version name that is a game of its own in this checkout gets its own executable (--exe overrides either). Splatoon
+# Raiders was lifted into generated/raiders and shares nothing with the DKB builds but the runtime.
+GAME_EXE = {'raiders': 'raiders'}
 
 
 def on_path(name):
@@ -225,6 +228,15 @@ def read_layout(gen):
     """[(name, base, size)] from layout.json (same format as recomp/layout.py read(), without its NSO dependency)."""
     data = json.loads((gen / 'layout.json').read_text())
     return [(m['name'], int(m['base'], 16), int(m['size'], 16)) for m in data]
+
+
+def exefs_hashes(exefs):
+    """{file: SHA-256} of an ExeFS directory: the identity rt_exefs_sha256 checks each module against at load.
+
+    tools/data/expected-<target>.json records the hashes of a verified release. A dump read in place has no such file
+    (and nothing derived from it belongs in the repository), so the build records the files it was built from: the
+    executable then still refuses to boot a different dump."""
+    return {p.name: file_sha256(p) for p in sorted(exefs.iterdir()) if p.is_file() and not p.name.startswith('.')}
 
 
 def chunk_files(gen, mod):
@@ -811,6 +823,10 @@ def main():
                                                     f'({", ".join(sorted(INSTALL_SIDE))} and modules.c still compile)')
     ap.add_argument('--expected', type=Path,
                     help='expected hashes (default tools/data/expected-<display version>.json)')
+    ap.add_argument('--display', help='display version the settings menu and --version name (default: the expected '
+                                      "file's display_version, else the version name)")
+    ap.add_argument('--exe', help=f'executable name (default {" or ".join(sorted(GAME_EXE.values()))} for those '
+                                  f'versions, dkb otherwise)')
     args = ap.parse_args()
 
     gen = (args.gen or ROOT / 'generated' / args.version).resolve()
@@ -820,14 +836,32 @@ def main():
              'romfs': (args.romfs or extracted / 'romfs').resolve(),
              'profile': (args.profile or ROOT / 'build' / ('profile' if args.version == 'v121'
                                                            else f'profile-{args.version}')).resolve()}
+    global CLANG, AR, WINDRES, NINJA, TOOLCHAIN_BIN, DEPS, EXE
     expected = args.expected
     if not expected:
-        if args.version not in DISPLAY_VERSIONS:
-            sys.exit(f'no expected hashes known for {args.version}; pass --expected')
-        expected = ROOT / 'tools' / 'data' / f'expected-v{DISPLAY_VERSIONS[args.version]}.json'
-    expected_data = json.loads(Path(expected).read_text())
-    hashes = expected_data['exefs_sha256']
-    global CLANG, AR, WINDRES, NINJA, TOOLCHAIN_BIN, DEPS
+        name = f'expected-v{DISPLAY_VERSIONS[args.version]}.json' if args.version in DISPLAY_VERSIONS \
+            else f'expected-{args.version}.json'
+        expected = ROOT / 'tools' / 'data' / name
+    if args.expected and not Path(expected).is_file():
+        sys.exit(f'{flag_path(expected)} not found')
+    if args.expected or expected.is_file():
+        expected_data = json.loads(Path(expected).read_text())
+        hashes = expected_data['exefs_sha256']
+    else:
+        # No recorded identity for this target: hash the ExeFS the build is for (exefs_hashes). A dump read in place
+        # never writes into the repository, and the executable still refuses another one at load.
+        if not paths['exefs'].is_dir():
+            sys.exit(f'no {flag_path(expected)}; pass --expected, or --exefs of the ExeFS this build is for')
+        hashes = exefs_hashes(paths['exefs'])
+        expected_data = {'display_version': args.display}
+        print(f'build_game: {flag_path(expected)} not found; recording the SHA-256 of the {len(hashes)} files in '
+              f'{flag_path(paths["exefs"])}')
+    if args.display:
+        expected_data['display_version'] = args.display
+    if args.exe:
+        EXE = args.exe + ('' if args.exe.endswith('.exe') or not WIN else '.exe')
+    else:
+        EXE = GAME_EXE.get(args.version, 'dkb') + ('.exe' if WIN else '')
     if args.ninja:
         NINJA = args.ninja.resolve()
     elif not NINJA.is_file() and (ROOT / 'bin' / ('ninja' + ('.exe' if WIN else ''))).is_file():
