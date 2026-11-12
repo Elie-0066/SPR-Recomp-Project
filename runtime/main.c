@@ -159,7 +159,20 @@ const RtConfig *rt_config(void) { return &cfg; }
 
 // ---- runtime services the generated code calls (cpu.h)
 volatile int g_fnprof = 0;
-void fnprof_hit(uint64_t addr, uint64_t lr, uint64_t x0) { (void)addr, (void)lr, (void)x0; }
+void fnprof_hit(uint64_t addr, uint64_t lr, uint64_t x0) {
+    static uint64_t last_obj = UINT64_MAX, last_vptr = UINT64_MAX;
+    if (!ldr_count()) return;
+    const RtLoaded *main = ldr_module(0);
+    uint64_t obj = LD64(main->base + 0x4c4b648ull);
+    uint64_t vptr = obj >= main->base && obj + 8 > obj && obj + 8 <= main->base + main->size ? LD64(obj) : UINT64_MAX;
+    if (obj != last_obj || vptr != last_vptr) {
+        rt_logf("fnwatch: main+%#llx lr=%#llx x0=%#llx slot=%#llx object=%#llx vptr=%#llx\n",
+                (unsigned long long)(addr - main->base), (unsigned long long)lr, (unsigned long long)x0,
+                (unsigned long long)(main->base + 0x4c4b648ull), (unsigned long long)obj, (unsigned long long)vptr);
+        last_obj = obj;
+        last_vptr = vptr;
+    }
+}
 
 void rt_brk(Cpu *c, uint32_t imm, uint64_t pc) {
     char at[128], lr[128];

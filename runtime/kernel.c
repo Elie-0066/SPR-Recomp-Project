@@ -2328,3 +2328,39 @@ HOST_OVERRIDE(KERN_SYM_INITIALIZE_FIBER, kern_fiber_initialize);
 HOST_OVERRIDE(KERN_SYM_FINALIZE_FIBER, kern_fiber_finalize);
 HOST_OVERRIDE(KERN_SYM_SWITCH_TO_FIBER, kern_fiber_switch);
 HOST_OVERRIDE(KERN_SYM_GET_CURRENT_FIBER, kern_fiber_current);
+
+// ---- hang report (boot.c's watchdog). Reads the thread list without taking G: a hang may be a thread holding it, and
+// a racy read of a stuck process is all this needs. A thread running lifted code only updates its pc at dispatch and
+// calls, so pc/lr say where it last entered a function, not the exact instruction.
+void kern_hang_report(void) {
+    char d[160], e[160];
+    rt_logf("hang: guest threads (kind 0 none, 1 lock, 2 condvar, 3 address, 4 sync)\n");
+    for (RtThread *t = g_all; t; t = t->all) {
+        if (t->exited) continue;
+        Cpu *c = t->cur ? t->cur : t->cpu;
+        rt_logf("hang: thread %#x%s prio %d core %d: wait kind %d addr %#llx key %#llx obj %#llx, host calls in progress %d, "
+                "holds virtual core %d\n", t->handle, t->is_main ? " (main)" : "", t->prio, t->core, t->wkind,
+                (unsigned long long)t->waddr, (unsigned long long)t->wkey, (unsigned long long)t->wobj, t->host_depth,
+                t->cur_core);
+        uint64_t hf[24];
+        int nh = 0;
+        if (t->hthr && t->host_depth > 0) {   // inside a host call or SVC: stop it for a moment to read its host stack
+            uint64_t rip, rsp;
+            if (plat_intr_stop(t->hthr, &rip, &rsp)) {
+                nh = plat_intr_backtrace(t->hthr, hf, 24);
+                plat_intr_resume(t->hthr, 0);
+            }
+        }
+        for (int i = 0; i < nh; i++) rt_logf("hang:   host %2d: %s\n", i, plat_addr_describe(hf[i], e, sizeof e));
+        if (!c) continue;
+        rt_logf("hang:   pc %s\n", ldr_describe(c->pc, d, sizeof d));
+        rt_logf("hang:   lr %s\n", ldr_describe(c->x[30], d, sizeof d));
+        uint64_t fp = c->x[29];
+        for (int n = 0; n < 12 && fp && !(fp & 7) && plat_mem_readable(fp, 16); n++) {
+            uint64_t next = LD64(fp), lr = LD64(fp + 8);
+            rt_logf("hang:   frame %2d: %s\n", n, ldr_describe(lr, e, sizeof e));
+            if (next <= fp || next - fp > (64u << 20)) break;
+            fp = next;
+        }
+    }
+}

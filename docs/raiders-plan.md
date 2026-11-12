@@ -1,12 +1,13 @@
 # Splatoon Raiders Recomp — plan
 
-Static recompilation of *Splatoon Raiders* (Nintendo Switch 2) into a native Windows x86-64 executable, built on
-[DKB Recomp](https://github.com/Lucas-blip-png/dkb-pc-recomp), which is itself built on
+This repository is a fork of [DKB Recomp](https://github.com/Lucas-blip-png/dkb-pc-recomp), retargeted from *Donkey
+Kong Bananza* to *Splatoon Raiders* (Nintendo Switch 2). DKB Recomp is itself built on
 [TotK Recomp](https://github.com/valentderah/totk-pc-recomp). No emulator runs at play time: the game's ARM64 code
 is lifted to C ahead of time, compiled with Clang, and its NVN 2 graphics calls are answered by a host implementation
 that renders through Vulkan.
 
-No game files are in this repository and none will be. The build reads the user's own dump from
+The lifter, Horizon host, and Vulkan backend are largely retained from DKB Recomp and its upstream projects. No game
+files are in this repository and none will be. The build reads the user's own dump from
 `config.local.toml`; everything derived from it stays under `build/` and `generated/` (both git-ignored).
 
 ## Dump
@@ -33,11 +34,13 @@ a fallback if a regression has to be bisected.
 - Graphics is NVN 2 (`Nin_Ounce_NVN2` in asset names). `main` imports only `nvnBootstrapLoader` and `nvnPrivate0`:
   the function table is fetched at run time, exactly as in DKB Recomp, so the whole NVN 2 surface is intercepted at
   one place.
-- Shaders are precompiled in the RomFS: `Shader\Hoian_UBER.Product.100.product.Nin_Ounce_NVN2.bfsha.zs` (10.1 MB
-  compressed) and `Shader\Sample.Nin_Ounce_NVN2.release.sarc.zs` (9.2 MB compressed → SARC with SFAT/SFNT tables,
-  12 entries whose payloads are `FSHA` shader archives, `AAMP` parameter blocks and `BAHS`/`SHAB`-style binaries).
-  Both are raw zstd frames (`28 B5 2F FD`). DKB's Ampere lowering and the Ryujinx translator are the intended path;
-  what is missing is an `FSHA` reader that feeds the same stage data DKB got from its shader cache.
+- Shaders are precompiled in the RomFS: the update contains `Shader\Hoian_UBER.Product.110.product.Nin_Ounce_NVN2.bfsha.zs`
+  and `Shader\Sample.Nin_Ounce_NVN2.release.sarc.zs`. The census reads the loose base RomFS plus the update overlay,
+  decompresses zstd frames, walks SARC members and extracts short-control NVN 2 stages embedded in FSHA/BNSH.
+  It found 3,690 unique stages and wrote the ignored `build\raiders\shaders\seed-nvn2.bin` pack, also copied to
+  `build\raiders\seed-nvn2.bin` where the runtime expects it. The xlate translator runs through a local .NET-host
+  launcher. Runtime lowering accepts 3,660 stages; 30 still fail Eglantine lowering (29 byte-to-float modes and one
+  multiply-wide addend mode). Driver-cache preparation completed 4,940 of 4,940 Vulkan stage variants with no failures.
 - `main` imports `movie.nss`; the sdk module exports the `nn::movie` classes. The host needs the codec surface
   DKB implemented for VP9 (`runtime/ov_codec.c`, libvpx).
 
@@ -67,11 +70,22 @@ So the first boot needs no new host function at all: what the port must supply i
 | Phase | | State |
 |---|---|---|
 | P0 Dump intake | ✅ | Loose ExeFS/RomFS read in place; no keys needed. NSO0 header parsed; module name and build ids read. |
-| P1 Lifter | ✅ | 259,898 functions lifted with **0 unsupported instructions**: `main` 212,391, `sdk` 45,972, `subsdk0` 1,535. 1,107 MB + 151 MB + 9 MB of C. |
-| P2 Horizon host | 🚧 | Host contract measured (see above): no missing symbol. The build links `raiders.exe` from `generated/raiders`. Threads, `svc*`, RomFS mount, input, audio and save are next. |
-| P3 NVN 2 front end | ⬜ | Reuse DKB's 700 entry points; survey which ones this game calls and which new command-buffer modes it uses. |
-| P4 Shaders | ⬜ | `FSHA` reader + Ampere→Maxwell→SPIR-V for the archive in `romfs\Shader`. |
-| P5 First frame | ⬜ | Boot `nnMain`, reach the title screen, then the first playable scene. |
+| P1 Lifter | ✅ | Update 65536 lifted with **0 unsupported instructions**: `main` 212,406, `sdk` 45,972, `subsdk0` 1,535. 1,107 MB + 151 MB + 9 MB of C. Generated modules must match the ExeFS loaded by the runtime; segment boundaries differ between base and update. |
+| P2 Horizon host | ✅ | Boots through `nnMain`, the RomFS mount, HID, audio, saves and the character creator. `nn::nfp` (amiibo) and `nn::ngc::ProfanityFilter` (name check) are answered by `runtime/ov_system.c`; without them the game opens services the host lacks (`nfp:user`, `ngc:u`) and `sm` is fatal. |
+| P3 NVN 2 front end | partial | Draws, passes, compute and presents work. Missing procs are still listed in the log (DLSS, dirty tile map, cooperative vectors). |
+| P4 Shaders | partial | Eglantine lowers all but 9 stages: 8 large compute variants of the upscaler (`CALL` linkage) and one vertex stage (a conditional `IMAD` with a constant-buffer addend whose bits 62-63 are set). Lowering gained signed `I2F.S8/S16`, `TXQ` mask 4 and `UIMAD.WIDE` with an immediate. |
+| P5 First frame | ✅ | Title, difficulty choice, the opening cutscene and the character creator render at about 55 fps. |
+
+
+### Bring-up findings
+
+Each one cost a session; they are listed so the next one does not repeat the search.
+
+- **The upscaler is a 2.3-million-word compute shader** (a neural network, 720p to 1080p). The NVIDIA driver needs minutes to compile it and a synchronous compile on the replay thread stops every draw. `vk_exec_draw.c` `raiders_upscaler` replaces its dispatch with a linear blit, and `vk_pipeline.c` `big_cs_defer` builds any other compute shader of over 400,000 words on a thread of its own.
+- **Cube maps are made as 2D arrays.** The sky and probe cube maps are created as 2D-array textures of 6 layers and sampled through cube descriptors. `vk_texture.c` gives such images `CUBE_COMPATIBLE` for this game only (the same flag on every square array broke AMD drivers in other titles), and `vk_exec_draw.c` `get_view` accepts a cube view of them. Without it the cube conversion pass read a black stand-in and the whole ambient lighting was missing.
+- **Bananza's light-quad skip does not apply** (`light_quad_fault_skip`): those quads are this game's lighting.
+- **Frame dumps.** `TOTK_DUMP=key` and F9 dump a frame; `TOTK_DUMP_PAIR=1` the next one too; `TOTK_DUMP_MIN_DRAWS=N` copies images only of passes with N draws or more (a full frame has 350 passes and the PNGs take minutes otherwise); `TOTK_DUMP_UBO=1` prints 32 uniform vectors per stage; `TOTK_DUMP_BUF=cs5` follows the buffer bound as compute SSBO slot 5. `TOTK_DUMP=probe` starts a dump by itself when the 78-layer reflection arrays are baked. The `hang:` lines the host writes after 10 s without a present name every guest thread, with its native stack.
+- **Open: the picture flickers from frame to frame.** In two consecutive frames the geometry (depth) is identical but the shading is not: one frame has dark characters, or a character's hair is blue in one frame and green in the next. Two 82,000-byte storage buffers (a light list: a header with a count, then records of position, colour, direction and a next index) swap between slots 1 and 5 each frame; a compute shader writes one of them at the start of the frame and the lighting pass reads both. Their contents are valid in the snapshots, so the fault is not yet located. Presented frames alternate between 16 ms and 90 ms (about 19 fps), and 285 of the 350 passes of a frame are 880x880 full-screen passes of one small shader.
 
 ### Lifter gaps found and closed
 
@@ -82,7 +96,7 @@ The DKB lifter had all Switch 2 additions except two instructions used by this g
 - `FNEG`/`FABS` on eight half-precision lanes (`fneg v2.8h`, 4 sites in `sdk`): lowered to a 128-bit XOR/AND with
   `0x8000800080008000` per 64-bit half in `recomp/simd_c.py` (`misc2_fp16`).
 
-`recomp/gen.py --exefs <base exefs> --out generated/raiders` now reports `0 unsupported` for all three modules, and
+`recomp/gen.py --exefs <update exefs> --out generated/raiders` now reports `0 unsupported` for all three modules, and
 the generated C passes `clang -fsyntax-only -std=gnu11` with `runtime/` on the include path.
 
 ## Next steps
@@ -93,15 +107,14 @@ the generated C passes `clang -fsyntax-only -std=gnu11` with `runtime/` on the i
    dump enters the repository.
 2. ~~**Import survey.**~~ Done (see "Host surface"): no import needs a host implementation; the 14 outside
    `sdk`/`subsdk0` are weak and bind to NULL.
-3. **First boot.** Run `build\raiders\raiders.exe --boot` and read the first failure. The chain is the SVC layer
-   (`svcSetHeapSize`, thread setup, `svcMapMemory`), then `nn::init::Start` in `sdk`, then `main`'s DT_INIT and
-   constructors (10,673 entries), then `nnMain`.
-4. **RomFS.** The dump is a 46,339-file directory, not a `romfs.bin`: either pack it (`tools/romfs_index.py` wants
-   `index.json` and a packed image) or teach `runtime/romfs.c`/`fs_host.c` to read the directory.
+3. **First boot.** Keep generated code and the loaded ExeFS on the same version. Investigate the host access violation
+   in `nnMain` after the RomFS mount and NVN/HID initialization, then continue toward the first frame.
+4. ~~**Loose RomFS.**~~ Done: `tools/romfs_index.py` indexes the extracted Raiders directory and `runtime/romfs.c`
+   opens files in place; no packed image or second multi-gigabyte copy is needed.
 5. **NVN 2 survey.** Log every `nvnBootstrapLoader` table entry this game touches and every new command-buffer mode
    before recording anything, as DKB did for its 51 new NVN 2 calls.
-6. **Shaders.** Decode one `FSHA` archive, dump its stage list, and check the SASS encoding (Ampere SM87/88) against
-   Eglantine's lowering before wiring it to `tools/xlate`.
+6. **Shaders.** The seed census, xlate translator and Vulkan driver-cache preparation now run end to end. Continue investigating the
+   30 unsupported Eglantine modes (29 byte-to-float and one multiply-wide addend), then rerun `raiders.exe --prepare-shaders`.
 
 ## Rules kept from DKB Recomp
 

@@ -16,6 +16,8 @@ typedef struct { uint64_t addr, size; unsigned index; } IpcBuffer;
 
 typedef struct {
     unsigned type, cmd;                    // HIPC type (4/5/6/7 CMIF, >= 16 TIPC) and command id
+    int domain;
+    uint32_t domain_object_id;
     int has_pid;
     uint64_t pid;
     uint32_t copy[8], move[8];
@@ -28,6 +30,8 @@ typedef struct {
 
 typedef struct {
     uint32_t result;
+    unsigned domain, ndomain_objects;
+    uint32_t domain_objects[8];
     uint8_t data[0x100];
     uint32_t data_size;
     uint32_t copy[8], move[8];
@@ -47,6 +51,9 @@ struct IpcSession {
     void *state;
     void (*close)(void *state);
     int32_t refs;
+    int domain;
+    uint32_t domain_next_id;
+    uint8_t domain_kind[33];
 };
 
 uint32_t ipc_session_new(const char *name, IpcHandler handler, void *state, void (*close)(void *state));   // handle

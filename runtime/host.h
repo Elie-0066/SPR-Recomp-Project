@@ -267,6 +267,7 @@ void ipc_session_retain(struct IpcSession *session);        // atomic retain; ca
 void fs_init(void);                                        // idempotent; paths from rt_config()
 
 // ---- account (ov_system.c)
+void ov_system_preload(void);                              // account service callbacks, before ldr_load
 void account_uid(uint64_t out[2]);                         // the local user's nn::account::Uid {lo, hi}, persistent in
                                                            // <profile>/account.uid; fs_host.c names save data after it
 

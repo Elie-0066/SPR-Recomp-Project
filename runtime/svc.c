@@ -10,6 +10,7 @@
 #include "fs.h"
 #include "gfx.h"
 #include "host.h"
+#include "ipc.h"
 #include "kernel.h"
 #include "platform/platform.h"
 
@@ -188,6 +189,29 @@ static void svc_body(Cpu *c, uint32_t imm, uint64_t pc) {
     if (kern_svc(c, imm)) return;
     uint64_t *x = c->x;
     switch (imm) {
+    case 0x13: {   // MapSharedMemory(w0 handle, x1 address, x2 size, w3 permission)
+        IpcTransferMemory *tm = kern_handle_get((uint32_t)x[0], KERN_TMEM);
+        rt_logf("svc: MapSharedMemory handle=%#x dst=%#llx size=%#llx perm=%#llx tm=%p\n",
+                (uint32_t)x[0], (unsigned long long)x[1], (unsigned long long)x[2],
+                (unsigned long long)x[3], (void *)tm);
+        if (!tm) { x[0] = KERN_R_BAD_HANDLE; return; }
+        if (!x[2] || ((x[1] | x[2]) & 0xfff) || x[2] > tm->size || (x[3] & ~tm->perm)) {
+            x[0] = 0xCC01u;   // InvalidAddress
+            return;
+        }
+        if (!plat_mem_commit(x[1], (size_t)x[2])) {
+            x[0] = KERN_R_INVALID_STATE_MEM;
+            return;
+        }
+        memcpy((void *)(uintptr_t)x[1], (const void *)(uintptr_t)tm->addr, (size_t)x[2]);
+        x[0] = R_OK;
+        return;
+    }
+    case 0x14:   // UnmapSharedMemory(w0 handle, x1 address, x2 size): HID's snapshot is owned for the process lifetime.
+        rt_logf("svc: UnmapSharedMemory handle=%#llx addr=%#llx size=%#llx\n",
+                (unsigned long long)x[0], (unsigned long long)x[1], (unsigned long long)x[2]);
+        x[0] = R_OK;
+        return;
     case 0x15: case 0x1F: case 0x21: case 0x22:
         if (ipc_svc(c, imm)) return;
         svc_fatal(c, imm, pc, "not handled by ipc.c");

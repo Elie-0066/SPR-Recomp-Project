@@ -22,8 +22,89 @@
 enum { T_CLOSE = 2, T_REQUEST = 4, T_CONTROL = 5, T_REQUEST_CTX = 6, T_CONTROL_CTX = 7, T_TIPC_CLOSE = 15,
        T_TIPC_BASE = 16 };
 
+// `hid` command 0 creates the applet-resource session. The resource's command 0 returns the HID shared-memory handle;
+// the data is zeroed here because this host has no console input devices. libnx's
+// nx/source/services/hid.c::_hidCreateAppletResource and _hidGetSharedMemoryHandle use this same command sequence.
+static _Alignas(0x1000) uint8_t hid_shared_memory[0x40000];
+
+static void hid_resource_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
+    if (rq->cmd != 0) ipc_unimplemented(s, rq);
+    IpcTransferMemory *tm = malloc(sizeof *tm);
+    if (!tm) rt_fatal("hid: shared-memory handle allocation");
+    *tm = (IpcTransferMemory){(uint64_t)(uintptr_t)hid_shared_memory, sizeof hid_shared_memory, 1};
+    rs->copy[rs->ncopy++] = kern_handle_new(KERN_TMEM, tm);
+    rt_logf("ipc: hid shared-memory handle %#x (%#llx+%#llx)\n", rs->copy[rs->ncopy - 1],
+            (unsigned long long)tm->addr, (unsigned long long)tm->size);
+}
+
+static void hid_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
+    switch (rq->cmd) {
+    case 0: // CreateAppletResource(appletResourceUserId) -> IAppletResource
+        if (rq->data_size < 8 || rs->nmove == 8) ipc_unimplemented(s, rq);
+        rs->move[rs->nmove++] = ipc_session_new("hid:applet-resource", hid_resource_handler, NULL, NULL);
+        return;
+    case 11:   // ActivateTouchScreen(appletResourceUserId)
+    case 1004: // SetTouchScreenOutputRanges on the Switch 2 SDK used by Raiders
+        return;
+    case 80: { // GetGyroscopeZeroDriftMode(handle, appletResourceUserId) -> standard mode
+        uint32_t mode = 1;
+        IPC_OUT(rs, mode);
+        return;
+    }
+    case 79: // SetGyroscopeZeroDriftMode(handle, mode, appletResourceUserId): the host uses its motion estimate
+        return;
+    default:
+        ipc_unimplemented(s, rq);
+    }
+}
+
+static void applet_ae_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
+    if (rq->domain_object_id == 1 && rq->cmd == 350) {
+        // OpenSystemApplicationProxy returns an IApplicationProxy domain object.
+        // OpenSystemApplicationProxy's eight-byte reserved argument is zero for applications.
+        rs->domain_objects[0] = 2;
+        rs->ndomain_objects = 1;
+        s->domain_next_id = 3;
+        s->domain_kind[2] = 1; // IApplicationProxy
+        return;
+    }
+    // IApplicationProxy's controller getters create new domain objects. The
+    // SDK uses the application, performance, and graphics-scaling interfaces
+    // while initializing the system application interfaces.
+    if (rq->domain_object_id == 2 && (rq->cmd <= 4 || rq->cmd == 10 || rq->cmd == 11 || rq->cmd == 20 ||
+                                      rq->cmd == 40 || rq->cmd == 60 || rq->cmd == 1000)) {
+        uint32_t id = s->domain_next_id++;
+        if (id > 32) rt_fatal("appletAE: too many domain objects");
+        rs->domain_objects[0] = id;
+        rs->ndomain_objects = 1;
+        switch (rq->cmd) {
+        case 0: s->domain_kind[id] = 2; break;  // ICommonStateGetter
+        case 1: s->domain_kind[id] = 3; break;  // ISelfController
+        case 2: s->domain_kind[id] = 4; break;  // IWindowController
+        case 3: s->domain_kind[id] = 5; break;  // IAudioController
+        case 4: s->domain_kind[id] = 6; break;  // IDisplayController
+        case 11: s->domain_kind[id] = 7; break; // ILibraryAppletCreator
+        case 20: s->domain_kind[id] = 8; break; // IApplicationFunctions
+        case 40: s->domain_kind[id] = 9; break; // IPerformanceFunctions (Switch 2)
+        case 60: s->domain_kind[id] = 10; break;// IGraphicsScalingParametersFunctions
+        default: s->domain_kind[id] = 11; break;
+        }
+        return;
+    }
+    if (rq->domain_object_id <= 32 && s->domain_kind[rq->domain_object_id] == 4 &&
+        (rq->cmd == 1 || rq->cmd == 2)) {
+        uint64_t applet_resource_user_id = 0x1001;
+        IPC_OUT(rs, applet_resource_user_id);
+        return;
+    }
+    rt_logf("ipc: appletAE domain object %u command %u\n", rq->domain_object_id, rq->cmd);
+    ipc_unimplemented(s, rq);
+}
+
 // Services sm: hands out. Anything else is a named fatal.
 static const struct { const char *name; IpcHandler handler; } services[] = {
+    {"hid", hid_handler},
+    {"appletAE", applet_ae_handler},
     {"audren:u", audren_manager_handler},
     {"aud:u", aud_user_handler},   // Switch 2: the way the SDK reaches audren:u
 };
@@ -185,15 +266,23 @@ static void respond(uint32_t *m, int tipc, const IpcResponse *rs) {
     uint8_t *words = (uint8_t *)p, *payload;
     unsigned header = tipc ? 4 : 16;
     payload = tipc ? words : (uint8_t *)out + (((words - (uint8_t *)out) + 15) & ~15);
-    unsigned used = (unsigned)(payload - words) + header + rs->data_size;
+    unsigned domain_header = rs->domain && !tipc ? 16 : 0;
+    unsigned used = (unsigned)(payload - words) + domain_header + header + rs->data_size + rs->ndomain_objects * 4;
     unsigned nwords = tipc ? (used + 3) / 4 : (used + 16 + 3) / 4;   // CMIF keeps alignment slack like libnx
     if ((size_t)(words - (uint8_t *)out) + nwords * 4 > IPC_MSG_BYTES) rt_fatal("ipc: response exceeds the message buffer");
+    if (domain_header) {
+        uint32_t dh[4] = {rs->ndomain_objects, 0, 0, 0};
+        memcpy(payload, dh, sizeof dh);
+        payload += sizeof dh;
+    }
     if (tipc) memcpy(payload, &rs->result, 4);
     else {
         uint32_t h[4] = {CMIF_OUT_MAGIC, 0, rs->result, 0};
         memcpy(payload, h, 16);
     }
     memcpy(payload + header, rs->data, rs->data_size);
+    if (rs->ndomain_objects)
+        memcpy(payload + header + rs->data_size, rs->domain_objects, rs->ndomain_objects * sizeof(uint32_t));
     out[0] = (rs->nxout & 0xf) << 16;
     out[1] = (nwords & 0x3ff) | (special ? 1u << 31 : 0);
     memcpy(m, out, IPC_MSG_BYTES);
@@ -202,6 +291,7 @@ static void respond(uint32_t *m, int tipc, const IpcResponse *rs) {
 // CMIF control requests. Domains are not implemented: MNG boots 1.2.1 without them.
 static void control(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
     switch (rq->cmd) {
+    case 0: { uint32_t id = 1; s->domain = 1; IPC_OUT(rs, id); return; } // ConvertToDomain
     case 3: { uint16_t n = POINTER_BUFFER_SIZE; IPC_OUT(rs, n); return; }   // QueryPointerBufferSize
     case 2: case 4: rs->move[rs->nmove++] = session_clone(s); return;          // CloneCurrentObject(Ex)
     default:
@@ -227,15 +317,30 @@ static void dispatch(IpcSession *s, uint32_t *m) {
         rq.data_size = (uint32_t)(end - bytes);
     } else if (rq.type == T_REQUEST || rq.type == T_REQUEST_CTX || rq.type == T_CONTROL || rq.type == T_CONTROL_CTX) {
         const uint8_t *payload = (const uint8_t *)m + (((bytes - (const uint8_t *)m) + 15) & ~15);
+        uint16_t domain_raw_size = 0;
+        if (s->domain && (rq.type == T_REQUEST || rq.type == T_REQUEST_CTX)) {
+            unsigned kind = payload[0], nobjects = payload[1];
+            domain_raw_size = LD16(payload + 2);
+            uint32_t object_id = LD32(payload + 4);
+            rq.domain = 1;
+            rq.domain_object_id = object_id;
+            if ((kind != 1 && kind != 2) || !object_id || object_id > 32 || nobjects > 8 ||
+                domain_raw_size > end - payload - 16)
+                rt_fatal("ipc: %s invalid domain request kind %u object %u length %u", s->name, kind, object_id,
+                         domain_raw_size);
+            if (kind == 2) { rs.domain = 1; respond(m, 0, &rs); return; }
+            payload += 16;
+        }
         uint32_t h[4];
         memcpy(h, payload, 16);
         if (h[0] != CMIF_IN_MAGIC) {
             ipc_backtrace();
-            rt_fatal("ipc: %s: CMIF magic %#x (domain sessions are not served)", s->name, h[0]);
+            rt_fatal("ipc: %s: CMIF magic %#x", s->name, h[0]);
         }
         rq.cmd = h[2];
         rq.data = payload + 16;
-        rq.data_size = payload + 16 <= end ? (uint32_t)(end - payload - 16) : 0;
+        rq.data_size = rq.domain ? domain_raw_size >= 16 ? domain_raw_size - 16 : 0
+                                 : payload + 16 <= end ? (uint32_t)(end - payload - 16) : 0;
     } else {
         fflush(stdout);
         rt_logf("ipc: %s message type %u:", s->name, rq.type);
@@ -246,6 +351,7 @@ static void dispatch(IpcSession *s, uint32_t *m) {
     }
     if (rq.type == T_CONTROL || rq.type == T_CONTROL_CTX) control(s, &rq, &rs);
     else s->handler(s, &rq, &rs);
+    if (rq.domain) rs.domain = 1;
     if (rt_trace & RT_TRACE_IPC) {
         char d[160];
         rt_log("ipc: %s %s %u -> %#x (copy %u move %u) from %s", s->name,

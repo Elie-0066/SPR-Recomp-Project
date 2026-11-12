@@ -942,6 +942,19 @@ void audio_device_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) 
         return;
     }
     case 5: { int32_t n = output_channels(); IPC_OUT(rs, n); return; }   // GetActiveChannelCount
+    case 17: {   // AcquireAudioOutputDeviceNotification: the host output device does not change during a run
+        uint32_t ev = __atomic_load_n(&change_event, __ATOMIC_ACQUIRE);
+        if (!ev) {
+            uint32_t mine = kern_event_new(), expected = 0;
+            if (__atomic_compare_exchange_n(&change_event, &expected, mine, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+                ev = mine;
+            else
+                ev = expected;
+        }
+        rs->copy[rs->ncopy++] = kern_event_readable(ev);
+        return;
+    }
+    case 18: return;   // ReleaseAudioOutputDeviceNotification: the shared event stays owned by the host
     case 19: return;   // SetAudioDeviceOutputVolumeAutoTuneEnabled [18.0.0+]: the host output has no auto tune
     case 20: case 21: {   // IsAudioDeviceOutputVolumeAutoTuneEnabled [18.0.0+], IsActiveOutputDeviceEstimatedLowLatency
         uint8_t v = 0;   //   [21.0.0+]: both false (Switchbrew, "Audio services")

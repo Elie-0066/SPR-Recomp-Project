@@ -3,8 +3,8 @@
 Adapted from MacNativeGames games/totk/scripts/prepare_romfs_backend.py @ b75be8cf (MIT, Copyright (c) 2026
 MacNativeGames contributors).
 
-Input: <romfs>/index.json ({status, romfs_size, romfs_sha256, files: [{path, offset, size}]}) as tools/extract.py
-writes it, and <romfs>/romfs.bin, whose size must match. Output, both in the build directory (never in the repo):
+Input: a verified <romfs>/index.json and <romfs>/romfs.bin, or a loose extracted RomFS directory for Raiders. Output,
+both in the build directory (never in the repo):
 
     romfs-index.bin   TOTKRFS1 layout: header <8sQQ (magic, count, strings offset), count 24-byte rows <QQII (offset,
                       size, name offset, name length including the NUL), then the NUL-terminated names; rows sorted by
@@ -14,6 +14,7 @@ writes it, and <romfs>/romfs.bin, whose size must match. Output, both in the bui
 Both are rewritten only when their bytes change, so Ninja does not rebuild romfs.c for nothing.
 
     .venv\\Scripts\\python tools\\romfs_index.py --romfs build\\extracted\\v121\\romfs --out build\\v121
+    .venv\\Scripts\\python tools\\romfs_index.py --romfs <loose-raiders-romfs> --out build\\raiders
 
 Standard library only.
 """
@@ -62,8 +63,27 @@ def write_if_changed(path, data):
 
 
 def write(romfs, out):
-    """Write romfs-index.bin and romfs_config.h into out. Returns (file count, index bytes, seconds)."""
+    """Write the runtime index for a verified image or a loose extracted RomFS directory."""
     t0 = time.monotonic()
+    if romfs.is_dir() and not (romfs / 'index.json').is_file():
+        files = []
+        total = 0
+        for path in romfs.rglob('*'):
+            if path.is_file():
+                name = path.relative_to(romfs).as_posix()
+                size = path.stat().st_size
+                files.append({'path': name, 'offset': 0, 'size': size})
+                total += size
+        files.sort(key=lambda e: e['path'].encode())
+        index = build_index({'files': files, 'romfs_size': total})
+        write_if_changed(out / 'romfs-index.bin', index)
+        config = (f'// Loose RomFS directory index, written by tools/romfs_index.py; do not edit. {GENERATED_MARKER}\n'
+                  '#pragma once\n#define ROMFS_DIRECTORY 1\n'
+                  f'#define ROMFS_IMAGE_SIZE {total}ull\n#define ROMFS_IMAGE_SHA256 ""\n'
+                  f'#define ROMFS_INDEX_SHA256 "{hashlib.sha256(index).hexdigest()}"\n'
+                  f'#define ROMFS_FILE_COUNT {len(files)}ull\n')
+        write_if_changed(out / 'romfs_config.h', config.encode())
+        return len(files), len(index), time.monotonic() - t0
     manifest = json.loads((romfs / 'index.json').read_text(encoding='utf-8'))
     if manifest.get('status') != 'pass':
         sys.exit(f'romfs_index: {romfs / "index.json"} does not record a verified extraction')

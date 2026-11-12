@@ -51,12 +51,20 @@ static const Pal kDk = {true, IM_COL32(246, 197, 43, 255), IM_COL32(190, 168, 13
                         IM_COL32(214, 150, 90, 255), IM_COL32(240, 190, 100, 255),
                         IM_COL32(107, 74, 42, 140), IM_COL32(255, 244, 214, 255),
                         ImVec4(246 / 255.f, 197 / 255.f, 43 / 255.f, 1), ImVec4(1.0f, 0.54f, 0.46f, 1)};
+static const Pal kRaiders = {true, IM_COL32(49, 225, 207, 255), IM_COL32(158, 190, 190, 255), IM_COL32(105, 139, 143, 255),
+                             IM_COL32(0, 0, 0, 70), IM_COL32(49, 225, 207, 34),
+                             IM_COL32(36, 89, 100, 255), IM_COL32(36, 89, 100, 110), IM_COL32(255, 112, 87, 150),
+                             IM_COL32(158, 190, 190, 255), IM_COL32(36, 89, 100, 255),
+                             IM_COL32(235, 249, 247, 255), IM_COL32(181, 207, 204, 255), IM_COL32(255, 247, 238, 255),
+                             IM_COL32(255, 143, 120, 255), IM_COL32(255, 173, 145, 255),
+                             IM_COL32(36, 89, 100, 140), IM_COL32(255, 247, 238, 255),
+                             ImVec4(49 / 255.f, 225 / 255.f, 207 / 255.f, 1), ImVec4(1.0f, 0.48f, 0.38f, 1)};
 static const Pal *P = &kClassic;
 #define kGold (P->gold)
 #define kDim (P->dim)
 #define kGrey (P->grey)
 
-void opt_theme(bool dk) { P = dk ? &kDk : &kClassic; }
+void opt_theme(int theme) { P = theme == 2 ? &kRaiders : theme == 1 ? &kDk : &kClassic; }
 ImVec4 opt_accent(void) { return P->accent; }
 ImVec4 opt_warn(void) { return P->warn; }
 

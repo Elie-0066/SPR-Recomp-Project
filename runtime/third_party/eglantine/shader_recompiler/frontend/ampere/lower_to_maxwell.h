@@ -549,6 +549,31 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             emit(0x5c10000000070000ULL | d_low | (u64{250} << 8) | (u64{255} << 20));
             break;
         }
+        case 0x8a5: { // UIMAD.WIDE.U32 UR(d):UR(d+1) = URa * imm32 + URc:UR(c+1) (Raiders: the divide-by-3 constant)
+            const u32 a = uniform_register(insn.Bits(24, 8)), b = insn.words[1];
+            const u32 c = insn.Bits(64, 8);
+            const u32 c_low = uniform_register(c), c_high = c == 63 ? 255U : uniform_register(c + 1);
+            const u32 d_low = uniform_register(insn.Bits(16, 8)), d_high = uniform_register(insn.Bits(16, 8) + 1);
+            if (native_predicate != 7 || (insn.words[2] & ~0xffU) != 0x0f8e0000 ||
+                (insn.Bits(16, 8) & 1) || (c != 63 && (c & 1)) || a == ~0U || c_low == ~0U ||
+                c_high == ~0U || d_low == ~0U || d_high == ~0U || d_low == 255)
+                return fail(index, "native uniform wide immediate multiply mode");
+            // The register form's sequence (case 0x2a5) with the multiplier as a 32-bit immediate.
+            xmad(250, a, b, 255, false, false, 0, true);
+            xmad(251, a, b, 250, true, false, 2, true);
+            xmad(250, a, b, 251, false, true, 1, true);
+            xmad(252, a, b, 251, true, true, 2, true);
+            emit(0x3828000000070000ULL | 250 | (u64{250} << 8) | (u64{16} << 20));
+            emit(0x5c10000000070000ULL | 253 | (u64{250} << 8) | (u64{252} << 20));
+            xmad(250, a, b, 255, false, false, 0, true);
+            xmad(251, a, b, 255, true, false, 0, true);
+            xmad(251, a, b, 251, false, true, 0, true);
+            emit(0x5c18000000070000ULL | 250 | (u64{251} << 8) | (u64{250} << 20) | (u64{16} << 39));
+            emit(0x5c10000000070000ULL | 250 | (u64{250} << 8) | (u64{c_low} << 20) | (u64{1} << 47));
+            emit(0x5c10000000070000ULL | d_high | (u64{253} << 8) | (u64{c_high} << 20) | (u64{1} << 43));
+            emit(0x5c10000000070000ULL | d_low | (u64{250} << 8) | (u64{255} << 20));
+            break;
+        }
         case 0x827: { // IMAD.HI.U32, captured zero addend
             if (insn.words[2] != 0x078e00ff) return fail(index, "native high multiply mode");
             const u32 a = insn.Bits(24, 8), b = insn.words[1];
@@ -1334,11 +1359,17 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             break;
         }
         case 0x28c: case 0x88c: { // UISETP, signed (bit 73) or unsigned, combined (bits 74-75) with UPn.
+            if (native_predicate != 7) {
+                // UISETP updates predicates only when its native predicate is true. Skip the full
+                // expansion when it is false so the previous guest predicate values are retained.
+                relocations.push_back({static_cast<u32>(result.instructions.size()), index + 1});
+                emit(0xe24000000000000fULL | (u64{native_predicate ^ 8U} << 16));
+            }
             const u32 output = insn.Bits(81, 3);
             const u32 a = uniform_register(insn.Bits(24, 8)), b = opcode == 0x88c ? 252U : uniform_register(insn.Bits(32, 8));
             const u32 combine = insn.Bits(87, 3), combine_op = insn.Bits(74, 2);
             if (output > 6 || insn.Bits(84, 3) != 7 || insn.Bits(72, 1) || combine_op == 3 ||
-                insn.Bits(12, 4) != 7 || a == ~0U || b == ~0U)
+                a == ~0U || b == ~0U)
                 return fail(index, "native uniform comparison mode");
             // The combined UPn is swapped in from R239 bit 6-n, as Maxwell ISETP's Pc (UPT stays PT).
             const u32 temporary = 6 - output, combine_slot = combine == 7 ? 7U : 6 - combine;
@@ -1514,8 +1545,9 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             }
             break;
         }
-        case 0xb6f: { // TXQ texture dimensions, two packed scalar outputs.
-            if (insn.Bits(59, 5) || insn.Bits(64, 8) != 255 || insn.Bits(72, 4) == 0 || insn.Bits(72, 4) > 3 ||
+        case 0xb6f: { // TXQ texture dimensions, two packed scalar outputs. Raiders: mask 4 too, the third dimension alone
+                      // (Maxwell's TXQ mask bit 2, which the emit below copies as it is).
+            if (insn.Bits(59, 5) || insn.Bits(64, 8) != 255 || insn.Bits(72, 4) == 0 || insn.Bits(72, 4) > 4 ||
                 insn.Bits(76, 14) || insn.Bits(91, 1) || insn.Bits(54, 5) >= 18 ||
                 insn.Bits(40, 14) > 0x1fff || (insn.Bits(72, 4) == 3 && (dest & 1)) || dest >= 254)
                 return fail(index, "native texture dimension query mode");
@@ -2161,18 +2193,21 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
         case 0x306: case 0xd06: { // I2F.F32.U8, low byte, round-to-nearest (0xd06: uniform source)
             const u32 source = opcode == 0xd06 ? uniform_register(insn.Bits(32, 8)) : insn.Bits(32, 8);
             // DKB Recomp: the uniform-source form too (0xd06, words[2] 0x08101000: I2F.U16 Rd, URs.H1).
-            if (insn.words[2] == (opcode == 0xd06 ? 0x08101000U : 0x00101000U) && !(insn.words[1] & 0xcfffff00U) &&
-                source != ~0U) {
+            // Raiders: the signed form too (I2F.S16, words[2] 0x00101400: bit 74 is the signed flag, as in I2FP below),
+            // which Maxwell's I2F takes in its bit 13.
+            if ((insn.words[2] & ~0x400U) == (opcode == 0xd06 ? 0x08101000U : 0x00101000U) &&
+                !(insn.words[1] & 0xcfffff00U) && source != ~0U) {
                 // I2F.U16 Rd, Rs(.H1): Maxwell's 16-bit source format, byte selector 0 or 2.
-                emit(base(0x5cb8000000000000ULL) | (u64{2} << 8) | (u64{1} << 10) | (u64{source} << 20) |
-                     (u64{insn.Bits(60, 2) * 2} << 41));
+                emit(base(0x5cb8000000000000ULL) | (u64{2} << 8) | (u64{1} << 10) | (u64{insn.Bits(74, 1)} << 13) |
+                     (u64{source} << 20) | (u64{insn.Bits(60, 2) * 2} << 41));
                 break;
             }
             // DKB Recomp: any source byte (I2F.U8 R3, R18.B3: selector in bits 60-61, Maxwell's in bits 41-42).
-            if (insn.words[2] != (opcode == 0xd06 ? 0x08001000U : 0x1000U) ||
+            if ((insn.words[2] & ~0x400U) != (opcode == 0xd06 ? 0x08001000U : 0x1000U) ||
                 (insn.words[1] & 0xcfffff00U) || source == ~0U)
                 return fail(index, "native byte-to-float conversion mode");
-            emit(base(0x5cb8000000000000ULL) | (u64{2} << 8) | (u64{source} << 20) | (u64{insn.Bits(60, 2)} << 41));
+            emit(base(0x5cb8000000000000ULL) | (u64{2} << 8) | (u64{insn.Bits(74, 1)} << 13) | (u64{source} << 20) |
+                 (u64{insn.Bits(60, 2)} << 41));
             break;
         }
         case 0x245: case 0xa45: case 0xc45: { // I2FP.F32.U32

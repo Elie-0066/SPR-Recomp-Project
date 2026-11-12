@@ -38,7 +38,7 @@
 #include "vk_exec.h"
 #include "platform/platform.h"
 
-#define MAX_PASSES 400
+#define MAX_PASSES 1000
 #define PNG_CAP (2ull << 30)
 #define INFLIGHT_CAP (3ull << 30)   // host buffers waiting for their submission
 #define MAX_ENTS 48                 // distinct pipeline + texture sets listed per pass
@@ -54,6 +54,7 @@ static int skip_runs, dump_ubo;        // TOTK_DUMP_SKIP_RUNS, TOTK_DUMP_UBO
 static uint32_t want_tex[16][2];       // TOTK_DUMP_TEX: slot id and 0, or width and height
 static int nwant_tex;
 static uint64_t last_targets;          // targets_sig of the last render pass; 0 after a dispatch
+static int dump_min_draws;             // TOTK_DUMP_MIN_DRAWS: a render pass with fewer draws is logged, its images are not copied
 static const char *pass_skip;          // why the current pass copies nothing, or NULL
 static volatile int64_t png_bytes, inflight;
 static PlatMutex rec_lock = PLAT_MUTEX_INIT, img_lock = PLAT_MUTEX_INIT;
@@ -356,6 +357,7 @@ static const char *copy_out(VkExec *ex, VkImage image, VkFormat vf, VkImageAspec
 // `stride` bytes at `off` (each record a letter: its value's index in the table under the map).
 
 static uint64_t bd_addr, bd_size, bd_off, bd_stride;
+static int bd_auto;   // TOTK_DUMP_BUF=cs5: the buffer bound as compute SSBO slot 5 at the first dispatch is the one followed
 static uint32_t bd_w, bd_h;
 static uint8_t *bd_prev;
 static FILE *bufs_f;
@@ -634,7 +636,7 @@ static void describe_bindings(Str *b, const VkExec *ex, const VkPipeInfo *info) 
             if (u->addr && vk_mem_resolve(u->addr, 1, &ms)) {
                 uint64_t n = u->size && u->size < ms.avail ? u->size : ms.avail;
                 const float *f = (const float *)(uintptr_t)u->addr;
-                for (uint64_t k = 0; k < 16 && (k + 1) * 16 <= n; k++)
+                for (uint64_t k = 0; k < 32 && (k + 1) * 16 <= n; k++)
                     sp(b, "%s[%llu] %g %g %g %g", k % 4 ? " " : "\n      ", (unsigned long long)k, f[4 * k], f[4 * k + 1],
                        f[4 * k + 2], f[4 * k + 3]);
             } else {
@@ -810,6 +812,7 @@ void vk_dump_pass_end(VkExec *ex) {
     int n = seq++;
     uint64_t sig = targets_sig(ex);
     pass_decide(skip_runs && sig == last_targets);
+    if (!pass_skip && pass_draws < dump_min_draws) pass_skip = "few draws";
     last_targets = sig;
     fprintf(passes_f, "pass %04d: render pass, draws %d, area %ux%u layers %u, fence %llu, frame %llu\n", n, pass_draws,
             ex->pass_w, ex->pass_h, ex->pass_layers, (unsigned long long)ex->fence, (unsigned long long)frame_now());
@@ -838,6 +841,16 @@ void vk_dump_dispatch(VkExec *ex, const GfxShader *cs, VkPipeline p, const VkPip
     (void)p;
     plat_mutex_lock(&rec_lock);
     if (!active()) goto out;
+    if (bd_auto && !bd_size) {   // follow that buffer from now on, through the following frame too (a ping-pong pair)
+        uint64_t a = ex->ssbo[5][5].addr, sz = ex->ssbo[5][5].size & ~3ull;
+        char bp[600];
+        snprintf(bp, sizeof bp, "%s/bufs.txt", dir);
+        if (a && sz && sz <= (1u << 20) && (bufs_f = fopen(bp, "w"))) {
+            bd_addr = a, bd_size = sz, bd_stride = 0;
+            rt_log("vk_dump: following the buffer at %#llx (%llu bytes) bound as compute SSBO slot 5", (unsigned long long)a,
+                   (unsigned long long)sz);
+        }
+    }
     int n = seq++;
     pass_decide(0);
     last_targets = 0;
@@ -945,10 +958,24 @@ void vk_dump_request(void) {
         rt_log("vk_dump: F9: frame %llu goes to %s", (unsigned long long)want, dir);
 }
 
+// TOTK_DUMP=probe: like key, but vk_texture.c asks for the dump itself, `ahead` frames after the game starts baking
+// its 78-layer reflection cube arrays (Splatoon Raiders), so the passes that fill them are in the dump.
+static int dump_probe_mode;   // TOTK_DUMP=probe
+static int dump_pair;         // TOTK_DUMP_PAIR: 0 off, 1 the first frame not done, 2 the second is next
+void vk_dump_request_in(unsigned ahead) {
+    if (!dump_probe_mode || finished) return;
+    uint64_t want = frame_now() + ahead, none = UINT64_MAX;
+    if (__atomic_compare_exchange_n(&dump_frame, &none, want, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        rt_log("vk_dump: probe bake seen: frame %llu goes to %s", (unsigned long long)want, dir);
+}
+
 void vk_dump_init(void) {
     const char *e = cfg_get("TOTK_DUMP");
-    if (e && !strcmp(e, "key")) dump_on_key = 1, dump_frame = UINT64_MAX;
+    if (e && (!strcmp(e, "key") || !strcmp(e, "probe"))) dump_on_key = 1, dump_probe_mode = !strcmp(e, "probe"), dump_frame = UINT64_MAX;
     else if (!e || !*e || !(dump_frame = strtoull(e, NULL, 10))) return;
+    dump_min_draws = cfg_int("TOTK_DUMP_MIN_DRAWS");
+    const char *pr = cfg_get("TOTK_DUMP_PAIR");
+    dump_pair = pr && *pr && *pr != '0';
     const char *lf = cfg_get("TOTK_DUMP_LOG");
     if (lf && *lf) log_from = strtoull(lf, NULL, 10);
     const char *sr = cfg_get("TOTK_DUMP_SKIP_RUNS");
@@ -971,7 +998,8 @@ void vk_dump_init(void) {
     images_f = fopen(path, "w");
     if (!passes_f || !images_f) rt_fatal("vk_dump: cannot write to %s", dir);
     const char *bf = cfg_get("TOTK_DUMP_BUF");
-    if (bf && *bf) {
+    if (bf && !strcmp(bf, "cs5")) bd_auto = 1;
+    else if (bf && *bf) {
         char *q;
         bd_addr = strtoull(bf, &q, 0);
         if (*q == ':') bd_size = strtoull(q + 1, &q, 0);
@@ -988,8 +1016,16 @@ void vk_dump_init(void) {
     else rt_log("vk_dump: frame %llu goes to %s", (unsigned long long)dump_frame, dir);
 }
 
+// TOTK_DUMP_PAIR=1: the frame after the dumped one goes into the same dump too, to compare two consecutive frames (a
+// scene that flickers from one frame to the next).
 void vk_dump_present(uint64_t frame) {
     if (frame != dump_frame) return;
+    if (dump_pair == 1) {
+        dump_pair = 2;
+        vk_sync_finish();   // the first frame's copies are written before the second one's are recorded
+        dump_frame = frame + 1;
+        return;
+    }
     plat_mutex_lock(&rec_lock);
     finished = 1;
     plat_mutex_unlock(&rec_lock);

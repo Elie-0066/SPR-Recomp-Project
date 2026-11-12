@@ -18,6 +18,7 @@
 #include "fs.h"
 #include "gfx.h"
 #include "input.h"
+#include "kernel.h"
 #include "nvn_api.h"
 #include "platform/platform.h"
 
@@ -98,6 +99,12 @@ static void cb_module_inits(Cpu *c) {
         if (want && entries != want)
             rt_fatal("boot: %s has %llu init_array entries, this game version has %llu", m->name, (unsigned long long)entries,
                      (unsigned long long)want);
+    }
+    if (!strcmp(rt_game_target, "raiders")) {
+        uint64_t am_init = ldr_symbol("_ZN2nn2am37InitializeSystemApplicationInterfacesEv");
+        if (!am_init) rt_fatal("boot: Raiders SDK has no nn::am::InitializeSystemApplicationInterfaces");
+        rt_log("boot: initialize the AM system interfaces before graphics startup");
+        rt_call(c, am_init, 0);
     }
     plat_xchg32(&inits_done, 1);
 }
@@ -339,6 +346,26 @@ static void guest_main(Cpu *c) {
     rt_fatal("boot: nn::init::Start returned");
 }
 
+// A run that stops presenting frames for 10 s after it has started is hung (a lost wakeup, a GPU wait, a host call that
+// never returns): write what every guest thread is waiting on, so the log names the stuck call. Runs on a host thread
+// that takes no kernel lock, so it still answers when the guest or the window thread is stuck.
+static void hang_watch_main(void *arg) {
+    (void)arg;
+    uint64_t last = 0, still = 0, reports = 0;
+    for (;;) {
+        plat_sleep_ms(1000);
+        uint64_t f = gfx_stats().frames;
+        if (f != last || !f) { last = f; still = 0; continue; }
+        if (++still % 10 == 0 && reports < 6) {
+            reports++;
+            rt_logf("hang: no frame presented for %llu s (last frame %llu)\n", (unsigned long long)still,
+                    (unsigned long long)f);
+            kern_hang_report();
+            fflush(stderr);
+        }
+    }
+}
+
 static void prewarm_main(void *arg) {
     (void)arg;
     gfx_backend()->boot_prewarm();
@@ -355,7 +382,9 @@ static void boot_main(void *arg) {
     check_npdm();
     if (!rt_config()->shot) gfx_backend()->boot_async();   // a --shot image must not depend on build timing
     // Shaders and pipelines recorded in earlier runs are made ready while the modules load; the guest waits for them.
+    plat_thread_spawn(hang_watch_main, NULL, "hangwd", 0);
     PlatThread *warm = plat_thread_new(prewarm_main, NULL, "prewarm");
+    ov_system_preload();
     ldr_load(rt_config()->exefs);
     rt_patches_init();
     dkb_camera_init();

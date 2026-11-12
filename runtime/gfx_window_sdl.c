@@ -22,6 +22,7 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include "cfg.h"
+#include "host.h"
 #include "gfx.h"
 #include "gfx_wsys.h"
 #include "input.h"
@@ -320,7 +321,8 @@ static void open_window(void *arg) {
     (void)arg;
     int w, h;
     gfx_cfg_window_size(&w, &h);
-    g_win = SDL_CreateWindow("DKB Recomp", w, h, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    g_win = SDL_CreateWindow(!strcmp(rt_game_target, "raiders") ? "Splatoon Raiders Recomp" : "DKB Recomp",
+                             w, h, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!g_win) {
         rt_log("gfx: SDL_CreateWindow failed (%s)", SDL_GetError());
         return;

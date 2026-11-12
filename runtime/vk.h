@@ -399,6 +399,7 @@ typedef struct {
     uint8_t alpha_one;             // X format: sample alpha as 1 through the view swizzle
     uint8_t chan[4];               // TexVkFormat.chan: component order of a stand-in format, applied by the view swizzle
     uint8_t mirrored, gpu_owned;
+    uint8_t cube_compat;           // created CUBE_COMPATIBLE: a cube view may be made of it whatever its target was
     uint8_t bound;                 // aliases physical-pool memory (physical and virtual pools)
     uint8_t block_views;           // BC image that renders through uncompressed views of its blocks (BLOCK_TEXEL_VIEW_
                                    // COMPATIBLE + EXTENDED_USAGE: only those views may use COLOR_ATTACHMENT)
@@ -626,6 +627,7 @@ int vk_geometry_supported(void);                   // 1: the device has geometry
 uint8_t vk_geometry_input(uint32_t nvn_primitive);    // GFX_GEOMETRY_*; 0 for unsupported/emulated input primitives
 // TOTK_DUMP=key (vk_dump.c): F9 in the game window dumps the frame after next; the window calls this on the key.
 void vk_dump_request(void);
+void vk_dump_request_in(unsigned ahead);   // TOTK_DUMP=probe: the dump goes to the frame `ahead` frames from now
 VkFormat vk_vertex_format(int nvn_format, int *type);     // attribute format (supported fallback), GFX_TYPE_* in *type
 PFN_vkCmdPushDescriptorSetKHR vk_pipeline_push_fn(void);  // after the first vk_pipeline_* call
 // Descriptor update templates (after the first vk_pipeline_* call): NULL when templates are off (TOTK_DESC_TEMPLATE=0,

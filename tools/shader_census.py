@@ -1,23 +1,49 @@
-"""Census of every Maxwell shader in the extracted TotK RomFS and ExeFS, and an offline translation pass.
+"""Census of Maxwell shaders and Splatoon Raiders NVN 2 stages, with an offline translation pass.
 
 Port of MacNativeGames games/totk/scripts/prepare_shader_seed.py (inventory, bnsh_shaders, sharcb_shaders, sarc) and the
 package walk of locate_shaders.py @ b75be8cf (MIT, Copyright (c) 2026 MacNativeGames contributors). Differences: no
 shared shader list, no spirv-cross, no bind-state variants; the module scan reads the NSO files under exefs/ directly;
 a control section must start with CONTROL_MAGIC (sharcb_shaders says why).
 
-Reads build/extracted/<version>/ (RomFS image plus index.json as tools/romfs_index.py reads them, and exefs/). Writes under
-build/<version>/shaders/ only:
+Reads build/extracted/<version>/ by default. `--romfs` and `--exefs` select other inputs; `--romfs-base` combines a loose
+base RomFS with a loose update overlay. Writes under build/<version>/shaders/ only:
     code/<key>.code     translator input (graphics: SPH + instructions, compute: instructions)
     jobs.json           key -> job, source path, origin (bnsh|sharcb|main)
+    seed-nvn2.bin       DKBN2SD1 pack for embedded Raiders FSHA/BNSH stages
     spv/<key>.spv       with --translate
     failures.txt        with --translate, when something failed: groups by message
 
-The key is sha256(control[:0x880] + code), as in MNG. Needs Python 3.14 (compression.zstd), so run in .venv-py314:
-
-    .venv-py314\\Scripts\\python tools\\shader_census.py --version v121 --translate
+The existing shader key is sha256(control[:0x880] + code). Python 3.14 uses compression.zstd; Python 3.12 uses the
+installed zstandard package.
 """
 import argparse
-import compression.zstd as zstd
+try:
+    import compression.zstd as zstd
+except ImportError:
+    # Python 3.12 build environment; the extracted Raiders RomFS can be read without
+    # installing the Python 3.14-only compression.zstd module.
+    import zstandard as _zstandard
+
+    class _ZstdCompat:
+        @staticmethod
+        def decompress(data, zstd_dict=None):
+            dictionary = _zstandard.ZstdCompressionDict(zstd_dict) if zstd_dict is not None else None
+            return _zstandard.ZstdDecompressor(dict_data=dictionary).decompress(data)
+
+        @staticmethod
+        def get_frame_info(data):
+            info = _zstandard.get_frame_parameters(data)
+            size = info.content_size
+            return type('FrameInfo', (), {
+                'decompressed_size': size if size != _zstandard.CONTENTSIZE_UNKNOWN else None,
+                'dictionary_id': info.dict_id,
+            })()
+
+        @staticmethod
+        def ZstdDict(data):
+            return _zstandard.ZstdCompressionDict(data)
+
+    zstd = _ZstdCompat()
 import concurrent.futures
 import hashlib
 import json
@@ -108,6 +134,47 @@ def bnsh_shaders(data):
             yield digest(control + code[:length]), stage, control, code[:length]
 
 
+def bnsh_nvn2_stages(data):
+    """Read the short-control NVN 2 stages stored in Raiders' FSHA/BNSH archives."""
+    if data[:4] != b'BNSH' or checked(data, 12, 2) != b'\xff\xfe' or checked(data, 96, 4) != b'grsc':
+        raise ValueError('unsupported Raiders BNSH header')
+    size = struct.unpack_from('<I', data, 28)[0]
+    data = checked(data, 0, size)
+    count, variations = struct.unpack_from('<IQ', data, 124)
+    checked(data, variations, count * 64)
+    for i in range(count):
+        program = struct.unpack_from('<Q', data, variations + i * 64 + 16)[0]
+        checked(data, program, 56)
+        for stage, relative in ((0, 8), (4, 40), (5, 48)):
+            offset = struct.unpack_from('<Q', data, program + relative)[0]
+            if not offset:
+                continue
+            control_off, code_off, code_size, control_size = struct.unpack_from(
+                '<QQII', checked(data, offset + 8, 24))
+            if control_size >= 0x880:
+                continue  # the existing census handles the older Maxwell control layout
+            control = checked(data, control_off, control_size)
+            code = checked(data, code_off, code_size)
+            if not control or not code:
+                continue
+            key = digest(struct.pack('<I', stage) + control + code)
+            yield key, stage, control, code
+
+
+def fsha_nvn2_stages(data):
+    """Yield short-control BNSH programs embedded in an FSHA file."""
+    if data[:4] != b'FSHA':
+        return
+    pos = 0
+    while (pos := data.find(b'BNSH\0\0\0\0', pos)) >= 0:
+        size = struct.unpack_from('<I', checked(data, pos + 28, 4))[0]
+        if size < 128:
+            raise ValueError('invalid BNSH size in FSHA')
+        for shader in bnsh_nvn2_stages(checked(data, pos, size)):
+            yield shader
+        pos += size
+
+
 def sharcb_shaders(data, rejected):
     """agl shader packages (.sharcb, magic BAHS): records <u64 code offset in the pool, u32 control size (0x880 or
     0x88c), i32 offset of the control from the record>; a record may reuse an earlier record's control.
@@ -178,16 +245,24 @@ def startup_package(name):
 SHADER_DIRS = ('Shader/', 'Effect/', 'Lib/agl/', 'Lib/Terrain/', 'Lib/gsys/', 'UI/LayoutArchive/')
 
 
-def inventory(romfs, exefs, everything=True):
+def inventory(romfs, exefs, everything=True, base_romfs=None):
     """Every unique shader: key -> dict(stage, control, code, source, origin, startup). As in MNG, a shader is a startup
     shader when it comes from an agl package, a game module, or a startup_package() RomFS file; the others come from
     effect and UI layout resources, which MNG translates only for bind states players have met. Also returns the number
     of .sharcb record candidates rejected for a missing control magic (see sharcb_shaders)."""
-    index = json.loads((romfs / 'index.json').read_text(encoding='utf-8'))
-    if index.get('status') != 'pass':
-        raise ValueError('RomFS has not passed integrity verification')
-    entries = {r['path']: r for r in index['files']}
+    loose = romfs.is_dir() and not (romfs / 'index.json').is_file()
+    if loose:
+        entries = {}
+        if base_romfs:
+            entries.update({p.relative_to(base_romfs).as_posix(): p for p in base_romfs.rglob('*') if p.is_file()})
+        entries.update({p.relative_to(romfs).as_posix(): p for p in romfs.rglob('*') if p.is_file()})
+    else:
+        index = json.loads((romfs / 'index.json').read_text(encoding='utf-8'))
+        if index.get('status') != 'pass':
+            raise ValueError('RomFS has not passed integrity verification')
+        entries = {r['path']: r for r in index['files']}
     shaders = {}
+    nvn2_stages = {}
     rejected = [0]
 
     def add(origin, name, found, startup):
@@ -197,8 +272,11 @@ def inventory(romfs, exefs, everything=True):
             if startup and not s['startup']:
                 s.update(source=name, origin=origin, startup=True)
 
-    with (romfs / 'romfs.bin').open('rb') as stream:
+    stream_context = open(os.devnull, 'rb') if loose else (romfs / 'romfs.bin').open('rb')
+    with stream_context as stream:
         def read(name):
+            if loose:
+                return entries[name].read_bytes()
             row = entries[name]
             stream.seek(row['offset'])
             raw = stream.read(row['size'])
@@ -207,15 +285,22 @@ def inventory(romfs, exefs, everything=True):
             return raw
 
         dictionaries = {}
-        for raw in sarc(zstd.decompress(read('Pack/ZsDic.pack.zs'))).values():
-            d = zstd.ZstdDict(raw)
-            dictionaries[d.dict_id] = d
+        if 'Pack/ZsDic.pack.zs' in entries:
+            for raw in sarc(zstd.decompress(read('Pack/ZsDic.pack.zs'))).values():
+                d = zstd.ZstdDict(raw)
+                dictionaries[d.dict_id] = d
 
         def decode(raw):
             info = zstd.get_frame_info(raw)
             if info.decompressed_size is None or info.decompressed_size > 512 << 20:
                 raise ValueError('unbounded shader package')
-            return zstd.decompress(raw, zstd_dict=dictionaries[info.dictionary_id] if info.dictionary_id else None)
+            dictionary = dictionaries.get(info.dictionary_id) if info.dictionary_id else None
+            if info.dictionary_id and dictionary is None:
+                raise ValueError(f'missing zstd dictionary {info.dictionary_id}')
+            try:
+                return zstd.decompress(raw, zstd_dict=dictionary)
+            except Exception as exc:
+                raise ValueError(f'zstd decode failed for {name}: {exc}') from exc
 
         def visit(origin, name, data, startup, depth=0):
             if data[:4] == b'BAHS':
@@ -227,6 +312,9 @@ def inventory(romfs, exefs, everything=True):
                 for member, raw in sarc(data).items():
                     visit(origin, name + '/' + member, decode(raw) if raw[:4] == ZSTD else raw, startup, depth + 1)
                 return
+            if data[:4] == b'FSHA':
+                for key, stage, control, code in fsha_nvn2_stages(data):
+                    nvn2_stages.setdefault(key, (stage, control, code, name))
             pos = 0   # BFSHA and BNSH files, effect and layout resources: complete, independently addressed BNSH files
             while (pos := data.find(b'BNSH\0\0\0\0', pos)) >= 0:
                 size = struct.unpack_from('<I', checked(data, pos + 28, 4))[0]
@@ -236,6 +324,8 @@ def inventory(romfs, exefs, everything=True):
         for name in sorted(entries):
             if not everything and not name.startswith(SHADER_DIRS):
                 continue
+            if name.endswith('.part'):
+                continue  # incomplete chunks are not independently decodable zstd frames
             raw = read(name)
             if raw[:4] not in (ZSTD, b'SARC', b'FSHA', b'BNSH', b'BAHS') and b'BNSH\0\0\0\0' not in raw:
                 continue
@@ -243,7 +333,19 @@ def inventory(romfs, exefs, everything=True):
     for module in sorted(exefs.iterdir()):
         if module.name in ('main', 'sdk', 'subsdk0', 'rtld'):
             visit('main', 'module:' + module.name, nso_image(module), True)
-    return shaders, rejected[0]
+    return shaders, rejected[0], nvn2_stages
+
+
+def write_nvn2_seed(stages, path):
+    """Write the NVN 2 seed format consumed by gfx_shader.c --prepare-shaders."""
+    out = bytearray(b'DKBN2SD1') + bytearray(struct.pack('<I', len(stages)))
+    for _, (stage, control, code, _) in sorted(stages.items()):
+        out += struct.pack('<III', stage, len(control), len(code))
+        out += control
+        out += b'\0' * (-len(control) & 3)
+        out += code
+        out += b'\0' * (-len(code) & 3)
+    path.write_bytes(out)
 
 
 def write_shaders(shaders, out, everything):
@@ -330,7 +432,10 @@ def translate(jobs, out):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument('--version', required=True, help='v121 (build/extracted/<version>)')
+    ap.add_argument('--version', required=True, help='version name; inputs default to build/extracted/<version>')
+    ap.add_argument('--romfs', type=Path, help='RomFS image directory or loose extracted RomFS directory')
+    ap.add_argument('--romfs-base', type=Path, help='base loose RomFS directory for an update overlay')
+    ap.add_argument('--exefs', type=Path, help='ExeFS directory (defaults to build/extracted/<version>/exefs)')
     ap.add_argument('--all', action='store_true', help='also the layout and effect shaders MNG leaves to bind-state variants')
     ap.add_argument('--translate', action='store_true', help='translate every shader and run spirv-val')
     args = ap.parse_args()
@@ -338,11 +443,17 @@ def main():
     extracted = ROOT / 'build' / 'extracted' / args.version
     out = ROOT / 'build' / args.version / 'shaders'
     out.mkdir(parents=True, exist_ok=True)
-    shaders, rejected = inventory(extracted / 'romfs', extracted / 'exefs')
+    shaders, rejected, nvn2_stages = inventory(args.romfs or extracted / 'romfs', args.exefs or extracted / 'exefs',
+                                               everything=args.all, base_romfs=args.romfs_base)
+    seed = out / 'seed-nvn2.bin'
+    write_nvn2_seed(nvn2_stages, seed)
+    runtime_dir = ROOT / 'build' / args.version
+    shutil.copyfile(seed, runtime_dir / 'seed-nvn2.bin')
     jobs = write_shaders(shaders, out, args.all)
     a, b, c = (sum(1 for j in jobs.values() if j['origin'] == o) for o in ('bnsh', 'sharcb', 'main'))
     print(f'{len(shaders)} unique shaders found in all, {len(jobs)} selected; {rejected} .sharcb record candidates '
           f'without a control section rejected', flush=True)
+    print(f'{len(nvn2_stages)} unique NVN 2 stages written to {seed} and runtime cache', flush=True)
     summary = f'shaders {len(jobs)} (bnsh {a}, sharcb {b}, main {c})'
     print(f'extracted {summary} in {time.monotonic() - t0:.1f} s', flush=True)
     if not args.translate:

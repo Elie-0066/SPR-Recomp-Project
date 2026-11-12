@@ -19,6 +19,8 @@
 #include <string.h>
 #include <time.h>
 
+#include <zstd.h>
+
 #include "aoc_romfs.h"
 #include "cfg.h"
 #include "host.h"
@@ -335,6 +337,16 @@ static void ov_nfp_availability(Cpu *c) {
 static void ov_nfp_no_device(Cpu *c) { ret_x(c, NFP_R_DEVICE_NOT_FOUND); }
 static void ov_nfp_device_state(Cpu *c) { ret_x(c, 0); }   // DeviceState GetDeviceState(const DeviceHandle &): none
 
+// nn::ngc::ProfanityFilter (the name entry's word check): the filter's service ngc:u is not provided, so initialising it
+// is a fatal in sm. Without a word list nothing is masked and every text passes.
+static void ov_ngc_initialize(Cpu *c) { rt_log("ngc: no profanity filter service; text is never masked"); ret_x(c, 0); }
+// Result MaskProfanityWordsInText(int *maskedCount, char *text, unsigned length): nothing masked.
+static void ov_ngc_mask(Cpu *c) {
+    int32_t *count = arg_p(c, 0);
+    if (count) *count = 0;
+    ret_x(c, 0);
+}
+
 // void err::ShowError(Result): the game's error dialog, logged
 static void ov_show_error(Cpu *c) {
     uint32_t r = (uint32_t)arg_x(c, 0);
@@ -394,10 +406,14 @@ static void obs_memory_pages(Cpu *c) {
 
 // ==== nn::account (account.c): one offline local user whose Uid survives restarts in <profile>/account.uid
 typedef struct { uint64_t lo, hi; } Uid;
-typedef struct { Uid uid; uint64_t token; } UserHandle;
+typedef struct { Uid uid; uint64_t service; } UserHandle;
 static PlatMutex account_lock = PLAT_MUTEX_INIT;
 static Uid local;
-static uint64_t tokens[64], next_token = 1;
+static uint64_t account_service, account_vtable;
+static uint64_t account_available_slot, account_id_slot;
+
+static void ov_network_account_available(Cpu *c);
+static void ov_network_account_id(Cpu *c);
 
 static void make_dirs(const char *dir) {
     plat_file_mkdir_p(dir);
@@ -440,10 +456,24 @@ static int same_uid(const Uid *u) { return u && u->lo == local.lo && u->hi == lo
 
 // Holding account_lock.
 static int valid_handle(const UserHandle *h) {
-    if (!h || !same_uid(&h->uid)) return 0;
-    for (int i = 0; i < 64; i++)
-        if (tokens[i] && tokens[i] == h->token) return 1;
-    return 0;
+    return h && same_uid(&h->uid) && h->service == account_service && account_service;
+}
+
+// UserHandle carries the account-service interface after its Uid. The title does not use online accounts, so its two
+// network queries dispatch to offline host callbacks through this guest-visible vtable.
+static void account_service_init(void) {
+    if (account_service) return;
+    if (!account_available_slot || !account_id_slot) rt_fatal("account: network callbacks were not registered before module load");
+    account_vtable = (uint64_t)(uintptr_t)mem_kernel_alloc(0x40, 16);
+    account_service = (uint64_t)(uintptr_t)mem_kernel_alloc(0x10, 16);
+    ST64(account_service, account_vtable);
+    ST64(account_vtable + 0x20, account_available_slot);
+    ST64(account_vtable + 0x28, account_id_slot);
+}
+
+void ov_system_preload(void) {
+    account_available_slot = hostfn_register("raiders.account.IsNetworkServiceAccountAvailable", ov_network_account_available);
+    account_id_slot = hostfn_register("raiders.account.GetNetworkServiceAccountId", ov_network_account_id);
 }
 
 // void Initialize()
@@ -451,6 +481,7 @@ static void ov_account_initialize(Cpu *c) {
     uint64_t uid[2];
     (void)c;
     account_uid(uid);
+    account_service_init();
 }
 
 // bool TryOpenPreselectedUser(UserHandle *out)
@@ -459,15 +490,10 @@ static void ov_open_user(Cpu *c) {
     if (!out) rt_fatal("nn::account::TryOpenPreselectedUser: null handle");
     plat_mutex_lock(&account_lock);
     load_uid();
-    int ok = 0;
-    for (int i = 0; i < 64 && !ok; i++)
-        if (!tokens[i]) {
-            tokens[i] = next_token++;
-            *out = (UserHandle){local, tokens[i]};
-            ok = 1;
-        }
+    account_service_init();
+    *out = (UserHandle){local, account_service};
     plat_mutex_unlock(&account_lock);
-    ret_x(c, (uint64_t)ok);
+    ret_x(c, 1);
 }
 
 // void CloseUser(const UserHandle &)
@@ -475,8 +501,6 @@ static void ov_close_user(Cpu *c) {
     const UserHandle *h = arg_p(c, 0);
     plat_mutex_lock(&account_lock);
     if (!valid_handle(h)) rt_fatal("nn::account::CloseUser: not an open user handle");
-    for (int i = 0; i < 64; i++)
-        if (tokens[i] == h->token) tokens[i] = 0;
     plat_mutex_unlock(&account_lock);
 }
 
@@ -496,6 +520,23 @@ static void ov_cached_account(Cpu *c) {
     plat_mutex_unlock_shared(&account_lock);
     // The local user has no linked Nintendo Account; the SDK leaves both outputs untouched on failure.
     ret_x(c, ok ? ACCOUNT_R_REGISTRATION_REQUIRED : ACCOUNT_R_INVALID);
+}
+
+// Result IsNetworkServiceAccountAvailable(bool *out, const UserHandle &): this build runs offline, so answer
+// successfully with no linked network account instead of letting the SDK contact an unimplemented account service.
+static void ov_network_account_available(Cpu *c) {
+    int virtual_call = c->x[0] == account_service;
+    uint8_t *out = arg_p(c, virtual_call ? 1 : 0);
+    if (out) *out = 0;
+    ret_x(c, virtual_call ? ACCOUNT_R_REGISTRATION_REQUIRED : 0);
+}
+
+// Result GetNetworkServiceAccountId(NetworkServiceAccountId *out): no online account is linked to this local user.
+static void ov_network_account_id(Cpu *c) {
+    int virtual_call = c->x[0] == account_service;
+    uint8_t *out = arg_p(c, virtual_call ? 1 : 0);
+    if (out) memset(out, 0, 16);
+    ret_x(c, ACCOUNT_R_REGISTRATION_REQUIRED);
 }
 
 // Result GetLastOpenedUser(Uid *out): the local user, the only one the host ever opens (Bananza asks after
@@ -656,6 +697,19 @@ static void ov_time_initialize(Cpu *c) {
 static void ov_time_finalize(Cpu *c) { plat_xchg32(&time_ready, 0); ret_x(c, 0); }
 static void ov_time_ready(Cpu *c) { ret_x(c, (uint64_t)time_ready); }
 
+// Result GetDeviceLocationName(LocationName *out): report the Windows host's UTC-offset zone in the SDK's 0x24-byte
+// location-name buffer, avoiding a dependency on nn::time's device service.
+static void ov_device_location_name(Cpu *c) {
+    char *out = arg_p(c, 0);
+    if (!out) { ret_x(c, TIME_R_INVALID); return; }
+    location_name(out);
+    ret_x(c, 0);
+}
+
+// bool StandardNetworkSystemClock::IsAccuracySufficient(): host wall-clock time is available and stable enough for
+// the game's startup checks; online time synchronisation is intentionally unavailable.
+static void ov_network_clock_accuracy(Cpu *c) { ret_x(c, 1); }
+
 // Result StandardUserSystemClock / StandardNetworkSystemClock::GetCurrentTime(PosixTime *out)
 static void ov_current_time(Cpu *c) {
     int64_t *out = arg_p(c, 0);
@@ -748,6 +802,10 @@ static void ov_user_difference(Cpu *c) {
     ret_x(c, (uint64_t)((b->user.offset - a->user.offset) * 1000000000ll));
 }
 
+// Result EnableGlobalFileDataCache(void *buffer, size_t size): the host mounts the loose RomFS directly, so the
+// console's optional fsp-srv global cache is neither needed nor available.
+static void ov_enable_global_file_cache(Cpu *c) { (void)c; ret_x(c, 0); }
+
 // ==== nn::pl shared fonts (shared_font.c). TotK asks for them only from its font loader, only with Simplified Chinese,
 // Korean or Traditional Chinese text, and only for type 0; tools/extract_fonts.py writes
 // them from the user's firmware. Each type is read on first use into guest-visible memory as the BFTTF file the pl
@@ -834,6 +892,163 @@ static void ov_font_size(Cpu *c) {
     ret_x(c, fonts.size[t]);
 }
 
+// ---- nn::pl built-in fonts (GetBuiltInFontData): the fonts the system adds to every process, which on a Switch 2 sit
+// in pl:u's platform shared resource, a system component that a game dump does not carry. The host answers them from
+// the game's own RomFS font archive instead, so the port needs no firmware and the text keeps the game's typography:
+// <romfs>/Font/Font.Nin_Ounce_NVN2.bfarc.zs holds the faces the game itself renders with (SpMain.bfotf is its standard
+// face) and each CJK archive adds the one face for that language.
+//
+// A BFOTF is an sfnt behind an 8-byte header (magic, size) whose bytes from offset 4 on are XORed with one key, the
+// key being word1 ^ (file size - 8); tools/make_romfs_patches.py bfotf_swap decodes it the same way and the game's
+// sfnt loader accepts the decoded font, so the returned address and size describe the plain OpenType font.
+static const struct { const char *archive, *member; } builtin_source[SHARED_FONT_TYPES] = {
+    {"Font.Nin_Ounce_NVN2.bfarc.zs", "scft/SpMain.bfotf"},        // standard
+    {"Font_CNzh.Nin_Ounce_NVN2.bfarc.zs", "scft/DFP_GBZY7.bfttf"},  // chinese-simplified
+    {"Font_CNzh.Nin_Ounce_NVN2.bfarc.zs", "scft/FZZhuoHJW.bfttf"},  // chinese-simplified-extension
+    {"Font_TWzh.Nin_Ounce_NVN2.bfarc.zs", "scft/DFPT_ZY9.bfttf"},   // chinese-traditional
+    {"Font_KRko.Nin_Ounce_NVN2.bfarc.zs", "scft/AsiaKPKS-R.bfttf"}, // korean
+    {"Font.Nin_Ounce_NVN2.bfarc.zs", "scft/SpMain.bfotf"}};         // nintendo-extension: no face of its own
+static struct { PlatMutex lock; const uint8_t *data[SHARED_FONT_TYPES]; uint64_t size[SHARED_FONT_TYPES]; } builtin;
+
+static uint32_t le16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
+static uint32_t le32(const uint8_t *p) {
+    return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
+// The whole file, malloc'd, with a named fatal when it is missing or too large to be a font archive.
+static uint8_t *read_whole(const char *path, uint64_t *len, const char *what) {
+    FILE *f = fopen(path, "rb");
+    if (!f) rt_fatal("%s: no font archive %s (the built-in fonts come from the game's own RomFS; check --romfs)", what,
+                     path);
+    plat_fseek64(f, 0, SEEK_END);
+    int64_t n = plat_ftell64(f);
+    plat_fseek64(f, 0, SEEK_SET);
+    if (n < 16 || n > (256 << 20)) rt_fatal("%s: font archive %s is %lld bytes", what, path, (long long)n);
+    uint8_t *p = malloc((size_t)n);
+    size_t got = p ? fread(p, 1, (size_t)n, f) : 0;
+    fclose(f);
+    if (got != (size_t)n) rt_fatal("%s: cannot read %s", what, path);
+    *len = (uint64_t)n;
+    return p;
+}
+
+// One zstd frame into freshly allocated memory.
+static uint8_t *zstd_inflate(const uint8_t *src, size_t src_size, uint64_t *out_len, const char *what) {
+    unsigned long long n = ZSTD_getFrameContentSize(src, src_size);
+    if (n == ZSTD_CONTENTSIZE_ERROR || n == ZSTD_CONTENTSIZE_UNKNOWN || n > (256u << 20))
+        rt_fatal("%s: not a zstd frame of known size", what);
+    uint8_t *out = malloc((size_t)n);
+    if (!out) rt_fatal("%s: no memory for %llu bytes", what, n);
+    size_t got = ZSTD_decompress(out, (size_t)n, src, src_size);
+    if (ZSTD_isError(got) || got != (size_t)n) rt_fatal("%s: %s", what, ZSTD_getErrorName(got));
+    *out_len = (uint64_t)n;
+    return out;
+}
+
+// Whether the NUL-terminated name at img+off, inside the image, is name.
+static int name_at(const uint8_t *img, uint64_t len, uint64_t off, const char *name) {
+    for (uint64_t i = 0; off + i < len; i++) {
+        uint8_t c = img[off + i];
+        if (c != (uint8_t)name[i]) return 0;
+        if (!c) return 1;
+    }
+    return 0;
+}
+
+// A member of a SARC archive (the format of the game's .bfarc files): header 'SARC' with the header size at +4 and the
+// data offset at +0xC, then SFAT whose 0x10-byte nodes hold a name hash, the attributes | name index, and the start and
+// end as offsets from the data offset, then SFNT holding the names, a name index being a quarter of its byte offset
+// past SFNT+8.
+static const uint8_t *sarc_member(const uint8_t *img, uint64_t len, const char *name, uint64_t *member_len,
+                                  const char *what) {
+    if (len < 0x20 || memcmp(img, "SARC", 4)) rt_fatal("%s: not a SARC archive", what);
+    uint64_t hdr = le16(img + 4), data_off = le32(img + 0xC);
+    if (hdr + 0x20 > len || memcmp(img + hdr, "SFAT", 4)) rt_fatal("%s: no SFAT at %#llx", what, (unsigned long long)hdr);
+    uint32_t count = le16(img + hdr + 6);
+    uint64_t nodes = hdr + 0x0C, names = nodes + (uint64_t)count * 0x10 + 8;
+    if (names > len || memcmp(img + names - 8, "SFNT", 4)) rt_fatal("%s: bad SFNT in %u members", what, count);
+    for (uint32_t i = 0; i < count; i++) {
+        const uint8_t *node = img + nodes + (uint64_t)i * 0x10;
+        uint64_t name_off = names + (uint64_t)(le32(node + 4) & 0xFFFFFF) * 4;
+        if (name_off >= len || !name_at(img, len, name_off, name)) continue;
+        uint64_t start = le32(node + 8), end = le32(node + 0xC);
+        if (end <= start || data_off + end > len)
+            rt_fatal("%s: member %s is [%#llx, %#llx) of %#llx bytes", what, name, (unsigned long long)start,
+                     (unsigned long long)end, (unsigned long long)len);
+        *member_len = end - start;
+        return img + data_off + start;
+    }
+    rt_fatal("%s: no member %s", what, name);
+    return NULL;
+}
+
+// The plain sfnt inside a BFOTF/BFTTF member, in freshly allocated memory.
+static uint8_t *bfotf_open(const uint8_t *p, uint64_t len, uint64_t *font_len, const char *what) {
+    if (len < 16) rt_fatal("%s: %llu bytes is too short for a BFOTF", what, (unsigned long long)len);
+    uint32_t size = (uint32_t)(len - 8);
+    uint8_t key[4];
+    for (int i = 0; i < 4; i++) key[i] = p[4 + i] ^ (uint8_t)(size >> (8 * (3 - i)));
+    uint8_t *font = malloc(size);
+    if (!font) rt_fatal("%s: no memory for %u bytes", what, size);
+    for (uint32_t i = 0; i < size; i++) font[i] = p[8 + i] ^ key[(i + 4) % 4];
+    if (memcmp(font, "OTTO", 4) && le32(font) != 0x00010000u)
+        rt_fatal("%s: the decoded font starts with %02x %02x %02x %02x, not an sfnt", what, font[0], font[1], font[2],
+                 font[3]);
+    *font_len = size;
+    return font;
+}
+
+// The built-in font of type t in guest-visible memory, decoded on first use.
+static const uint8_t *builtin_font(const char *fn, int64_t t) {
+    plat_mutex_lock(&builtin.lock);
+    if (!builtin.data[t]) {
+        char path[PLAT_PATH_MAX + 64], what[PLAT_PATH_MAX + 96];
+        snprintf(path, sizeof path, "%s/Font/%s", rt_config()->romfs, builtin_source[t].archive);
+        snprintf(what, sizeof what, "nn::pl::%s(%lld)", fn, (long long)t);
+        uint64_t packed_len, img_len, member_len, font_len;
+        uint8_t *packed = read_whole(path, &packed_len, what);
+        uint8_t *img = zstd_inflate(packed, (size_t)packed_len, &img_len, what);
+        free(packed);
+        const uint8_t *member = sarc_member(img, img_len, builtin_source[t].member, &member_len, what);
+        uint8_t *font = bfotf_open(member, member_len, &font_len, what);
+        free(img);
+        // Some NVN2 FSS callers still issue their last read using the packed font resource's
+        // size after the callback supplied this decoded fallback. Keep a zero-filled 1 MiB
+        // guest-visible allocation behind the sfnt so that a stale resource length cannot
+        // read into an unmapped kernel page. The reported font size remains the decoded sfnt
+        // length, so parsers still see the actual table bounds.
+        uint64_t allocation_len = font_len < (1u << 20) ? (1u << 20) : font_len;
+        uint8_t *dst = mem_kernel_alloc(allocation_len, 64);
+        memcpy(dst, font, (size_t)font_len);
+        free(font);
+        builtin.size[t] = font_len;
+        __atomic_store_n(&builtin.data[t], dst, __ATOMIC_RELEASE);
+        rt_log("pl: built-in font %lld: %llu bytes of %s from %s at %p", (long long)t, (unsigned long long)font_len,
+               builtin_source[t].member, path, (void *)dst);
+    }
+    const uint8_t *p = builtin.data[t];
+    plat_mutex_unlock(&builtin.lock);
+    return p;
+}
+
+// bool nn::pl::GetBuiltInFontData(BuiltInFontData*, BuiltInFontType, bool): the out struct is {u8, bool, pad[6], void*
+// address, size_t size} and the game reads the sfnt at address; the game asks again for every type it uses.
+static void ov_builtin_font(Cpu *c) {
+    int64_t t = (int32_t)arg_x(c, 1);
+    if (t < 0 || t >= SHARED_FONT_TYPES) {
+        rt_fatal("nn::pl::GetBuiltInFontData: invalid built-in font type %lld", (long long)t);
+    }
+    const uint8_t *font = builtin_font("GetBuiltInFontData", t);
+    uint8_t *out = arg_p(c, 0);
+    if (out) {
+        uint64_t address = (uint64_t)(uintptr_t)font, size = builtin.size[t];
+        memset(out, 0, 0x18);
+        memcpy(out + 8, &address, 8);
+        memcpy(out + 0x10, &size, 8);
+    }
+    ret_x(c, 1);
+}
+
 // ==== registration
 // ---- Switch 2 oe calls (Donkey Kong Bananza)
 // int nn::oe::GetCurrentGraphicsScale(): an enum 0-2; main+0x4686d4 maps it through a float table {3, 12, 16} and
@@ -903,7 +1118,26 @@ HOST_OVERRIDE("_ZN2nn3nfp14StartDetectionERKNS0_12DeviceHandleE", ov_nfp_no_devi
 HOST_OVERRIDE("_ZN2nn3nfp13StopDetectionERKNS0_12DeviceHandleE", ov_nfp_no_device);
 HOST_OVERRIDE("_ZN2nn3nfp10GetTagInfoEPNS0_7TagInfoERKNS0_12DeviceHandleE", ov_nfp_no_device);
 HOST_OVERRIDE("_ZN2nn3nfp12GetModelInfoEPNS0_9ModelInfoERKNS0_12DeviceHandleE", ov_nfp_no_device);
+// Splatoon Raiders imports these too. Without a device the game never holds a handle, but a call that reached the guest
+// SDK would open the nfp:user service, which the host does not provide (a fatal), so each answers "no device".
+HOST_OVERRIDE("_ZN2nn3nfp13GetCommonInfoEPNS0_10CommonInfoERKNS0_12DeviceHandleE", ov_nfp_no_device);
+HOST_OVERRIDE("_ZN2nn3nfp15GetRegisterInfoEPNS0_12RegisterInfoERKNS0_12DeviceHandleE", ov_nfp_no_device);
+HOST_OVERRIDE("_ZN2nn3nfp18GetApplicationAreaEPvPmRKNS0_12DeviceHandleEm", ov_nfp_no_device);
+HOST_OVERRIDE("_ZN2nn3nfp18SetApplicationAreaERKNS0_12DeviceHandleEPKvm", ov_nfp_no_device);
+HOST_OVERRIDE("_ZN2nn3nfp19OpenApplicationAreaERKNS0_12DeviceHandleEj", ov_nfp_no_device);
+HOST_OVERRIDE("_ZN2nn3nfp21CreateApplicationAreaERKNS0_12DeviceHandleERKNS0_25ApplicationAreaCreateInfoE", ov_nfp_no_device);
+HOST_OVERRIDE("_ZN2nn3nfp23RecreateApplicationAreaERKNS0_12DeviceHandleERKNS0_25ApplicationAreaCreateInfoE", ov_nfp_no_device);
+HOST_OVERRIDE("_ZN2nn3nfp5FlushERKNS0_12DeviceHandleE", ov_nfp_no_device);
+HOST_OVERRIDE("_ZN2nn3nfp13StartRestorerEPNS0_12DeviceHandleERKNS0_24AmiiboSettingsStartParamERKNS0_7TagInfoE", ov_nfp_no_device);
+HOST_OVERRIDE("_ZN2nn3nfp19StartGameDataEraserEPNS0_12DeviceHandleERKNS0_24AmiiboSettingsStartParamERKNS0_7TagInfoE", ov_nfp_no_device);
+HOST_OVERRIDE("_ZN2nn3nfp29StartNicknameAndOwnerSettingsEPNS0_12DeviceHandleEPbPNS0_12RegisterInfoERKNS0_24AmiiboSettingsStartParamERKNS0_7TagInfoE", ov_nfp_no_device);
+HOST_OVERRIDE("_ZN2nn3nfp29StartNicknameAndOwnerSettingsEPNS0_12DeviceHandleEPbPNS0_12RegisterInfoERKNS0_24AmiiboSettingsStartParamERKNS0_7TagInfoERKS4_", ov_nfp_no_device);
 HOST_OVERRIDE("_ZN2nn3err9ShowErrorENS_6ResultE", ov_show_error);
+HOST_OVERRIDE("_ZN2nn3ngc15ProfanityFilter10InitializeEPvm", ov_ngc_initialize);
+HOST_OVERRIDE("_ZN2nn3ngc15ProfanityFilter10InitializeEPvmb", ov_ngc_initialize);
+HOST_OVERRIDE("_ZN2nn3ngc15ProfanityFilter8FinalizeEv", ov_result_ok);
+HOST_OVERRIDE("_ZN2nn3ngc15ProfanityFilter15SkipAtSignCheckENS1_8SkipModeE", ov_result_ok);
+HOST_OVERRIDE("_ZN2nn3ngc15ProfanityFilter24MaskProfanityWordsInTextEPiPcj", ov_ngc_mask);
 
 HOST_OVERRIDE("nndiagStartup", ov_diag_startup);
 HOST_OVERRIDE("_ZN2nn3aoc10InitializeEv", ov_aoc_initialize);
@@ -932,6 +1166,8 @@ HOST_OVERRIDE("_ZN2nn7account11GetNicknameEPNS0_8NicknameERKNS0_3UidE", ov_nickn
 HOST_OVERRIDE("_ZN2nn4time10InitializeEv", ov_time_initialize);
 HOST_OVERRIDE("_ZN2nn4time8FinalizeEv", ov_time_finalize);
 HOST_OVERRIDE("_ZN2nn4time13IsInitializedEv", ov_time_ready);
+HOST_OVERRIDE("_ZN2nn4time21GetDeviceLocationNameEPNS0_12LocationNameE", ov_device_location_name);
+HOST_OVERRIDE("_ZN2nn4time26StandardNetworkSystemClock20IsAccuracySufficientEv", ov_network_clock_accuracy);
 HOST_OVERRIDE("_ZN2nn4time23StandardUserSystemClock14GetCurrentTimeEPNS0_9PosixTimeE", ov_current_time);
 HOST_OVERRIDE("_ZN2nn4time26StandardNetworkSystemClock14GetCurrentTimeEPNS0_9PosixTimeE", ov_current_time);
 HOST_OVERRIDE("_ZN2nn4time19StandardSteadyClock3nowEv", ov_steady_now);
@@ -944,7 +1180,11 @@ HOST_OVERRIDE("_ZN2nn4time13ClockSnapshot29CreateWithStandardSystemClockEPS1_", 
 HOST_OVERRIDE("_ZN2nn4time20CalculateSpanBetweenEPNS_8TimeSpanERKNS0_13ClockSnapshotES5_", ov_span_between);
 HOST_OVERRIDE("_ZN2nn4time48CalculateStandardUserSystemClockDifferenceByUserERKNS0_13ClockSnapshotES3_",
               ov_user_difference);
+HOST_OVERRIDE("_ZN2nn2fs25EnableGlobalFileDataCacheEPvm", ov_enable_global_file_cache);
 
 HOST_OVERRIDE("_ZN2nn2pl22GetSharedFontLoadStateENS0_14SharedFontTypeE", ov_font_state);
 HOST_OVERRIDE("_ZN2nn2pl20GetSharedFontAddressENS0_14SharedFontTypeE", ov_font_address);
 HOST_OVERRIDE("_ZN2nn2pl17GetSharedFontSizeENS0_14SharedFontTypeE", ov_font_size);
+HOST_OVERRIDE("_ZN2nn2pl18GetBuiltInFontDataEPNS0_17BuiltInFontDataNxENS0_17BuiltInFontTypeNxEb", ov_builtin_font);
+HOST_OVERRIDE("_ZN2nn2pl18GetBuiltInFontDataEPNS0_20BuiltInFontDataOunceENS0_20BuiltInFontTypeOunceEb",
+              ov_builtin_font);

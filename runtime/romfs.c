@@ -1,6 +1,6 @@
 // Adapted from MacNativeGames games/totk/runtime/romfs.c @ b75be8cf (MIT, Copyright (c) 2026 MacNativeGames
 // contributors).
-// Read-only game RomFS backed by the player's extracted image.
+// Read-only game RomFS backed by the player's extracted image or (for Raiders) loose directory.
 //
 // Input: <romfs>/romfs.bin (rt_config()->romfs), whose six IVFC levels and SHA-256 tools/extract.py verified, and
 // romfs-index.bin next to totk.exe (TOTK_ROMFS_INDEX overrides), which tools/romfs_index.py wrote together with
@@ -510,6 +510,13 @@ static void init_once(void *param) {
     double t0 = now_s();
     load_index();
     const char *dir = rt_config()->romfs;
+#ifdef ROMFS_DIRECTORY
+    need(plat_dir_exists(dir), "loose RomFS directory is missing");
+    snprintf(image_file, sizeof image_file, "%s", dir);
+    rt_log("RomFS directory %s: %llu indexed files", dir, (unsigned long long)file_count);
+    rt_log("RomFS ready: loose directory, %.2f s", now_s() - t0);
+    return;
+#endif
     need(snprintf(image_file, sizeof image_file, "%s/romfs.bin", dir) < (int)sizeof image_file, "image path");
     image = open_read(image_file);
     if (!image) rt_fatal("RomFS image %s missing; put romfs.bin into the romfs folder next to totk or set TOTK_ROMFS",
@@ -603,6 +610,26 @@ uint32_t romfs_open(uint64_t *out, const char *path, int mode) {
     if (!p) return FS_R_PATH_NOT_FOUND;
     uint64_t i = file_index(p);
     if (i == UINT64_MAX) return FS_R_PATH_NOT_FOUND;
+#ifdef ROMFS_DIRECTORY
+    char full[4096];
+    if (snprintf(full, sizeof full, "%s/%s", rt_config()->romfs, p) >= (int)sizeof full)
+        return FS_R_INVALID;
+    PlatFile *direct = open_read(full);
+    if (!direct) return FS_R_PATH_NOT_FOUND;
+    plat_mutex_lock(&lock);
+    for (unsigned j = 1; j < NH; j++)
+        if (!handles[j]) {
+            handles[j] = i + 1;
+            handle_ovl[j] = UINT32_MAX;
+            handle_file[j] = direct;
+            *out = ROMFS_HANDLE_BASE + j;
+            plat_mutex_unlock(&lock);
+            return 0;
+        }
+    plat_mutex_unlock(&lock);
+    plat_file_close(direct);
+    rt_fatal("RomFS file handle table full (%d)", NH);
+#endif
     uint32_t ov = overlay_slot(i);
     PlatFile *f = NULL;
     if (ov) {
@@ -638,6 +665,16 @@ static int handle_source(uint64_t h, PlatFile **f, uint64_t *base, uint64_t *siz
     PlatFile *of = handle_file[j];
     plat_mutex_unlock_shared(&lock);
     if (!i) return 0;
+#ifdef ROMFS_DIRECTORY
+    if (ov == UINT32_MAX) {
+        *f = of;
+        *base = 0;
+        PlatFileId id;
+        need(of && plat_file_id(of, &id), "loose file information");
+        *size = id.size;
+        return 1;
+    }
+#endif
     if (ov) {
         *f = of;
         *base = 0;
@@ -710,7 +747,7 @@ void romfs_close(uint64_t h) {
         rt_fatal("RomFS: close of invalid file handle %#llx", (unsigned long long)h);
     uint64_t j = h - ROMFS_HANDLE_BASE;
     plat_mutex_lock(&lock);
-    PlatFile *of = handle_ovl[j] ? handle_file[j] : NULL;
+    PlatFile *of = handle_file[j];
     handles[j] = 0;
     handle_ovl[j] = 0;
     handle_file[j] = NULL;

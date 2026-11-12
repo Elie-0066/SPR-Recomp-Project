@@ -53,6 +53,11 @@ int plat_intr_stop(PlatIntr *t, uint64_t *rip, uint64_t *rsp);
 // Lets a stopped t go on: at to when to is nonzero, else where it stopped. 0 when the redirection failed (t then goes
 // on where it stopped).
 int plat_intr_resume(PlatIntr *t, uint64_t to);
+// Between plat_intr_stop and plat_intr_resume: the stopped thread's host return addresses, innermost first (the hang
+// report). Returns how many; 0 where the platform cannot unwind (the report then shows the guest side only).
+int plat_intr_backtrace(PlatIntr *t, uint64_t *frames, int max);
+// "module+0xoffset" for a host code address (the hang report), or the bare address.
+const char *plat_addr_describe(uint64_t addr, char *buf, int n);
 #if defined(__aarch64__)
 // AArch64 has no jump through memory, and code interrupted anywhere may have every general register live, x30 and the
 // IP registers included, so the code a thread was sent to cannot jump back by itself without losing one. It saves the

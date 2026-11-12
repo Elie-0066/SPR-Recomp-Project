@@ -2869,7 +2869,22 @@ static VkPipeline compute_create(const GfxShader *cs, const Layout *l) {
                                       .flags = vk_pipeline_capture_flags(), .layout = l->layout};
     pin_subgroup32(&ci.stage, &rqc, code, words);
     VkPipeline pipe = VK_NULL_HANDLE;
+    // A driver that never returns from this call hangs the replay thread with P.lock held (a compute shader build is
+    // synchronous). The log line names the shader before the call, and its SPIR-V goes to last-compute.spv, so a hang
+    // leaves the culprit behind for spirv-val and an offline compile.
+    uint32_t local[3];
+    gfx_shader_local_size(cs, local);
+    rt_log("vk_pipeline: compute pipeline build: spirv fnv %016llx, %llu words, origin %#llx, local size %ux%ux%u",
+           (unsigned long long)gfx_shader_spirv_fnv(cs), (unsigned long long)words,
+           (unsigned long long)gfx_shader_origin(cs), local[0], local[1], local[2]);
+    FILE *dump = fopen("last-compute.spv", "wb");
+    if (dump) {
+        fwrite(code, 4, (size_t)words, dump);
+        fclose(dump);
+    }
+    double t0 = now_ms();
     if (vkCreateComputePipelines(P.device, P.cache, 1, &ci, NULL, &pipe) != VK_SUCCESS) pipe = VK_NULL_HANDLE;
+    if (now_ms() - t0 > 500) rt_log("vk_pipeline: that compute pipeline took %.0f ms", now_ms() - t0);
     vkDestroyShaderModule(P.device, m, NULL);
     return pipe;
 }
@@ -2923,6 +2938,51 @@ static struct {
     PlatMutex stat;
 } LB = {.stat = PLAT_MUTEX_INIT};
 
+// A compute shader this large (Splatoon Raiders has one of 2.3 million SPIR-V words: about 71,000 function-scope
+// variables) keeps the NVIDIA driver compiling for minutes. Building it on the replay thread with P.lock held stops
+// every draw, so it is built on a thread of its own and the dispatches that use it are skipped until it is ready, as a
+// draw is skipped while its graphics pipeline builds. A shader the driver never finishes costs one parked thread.
+#define BIG_CS_WORDS 400000u
+#define BIG_CS_MAX 16
+
+static struct { const GfxShader *cs[BIG_CS_MAX]; int n; } BIG;   // shaders whose build was started (holding P.lock)
+
+static int cs_is_big(const GfxShader *cs) {
+    uint64_t words = 0;
+    gfx_shader_spirv(cs, &words);
+    return words > BIG_CS_WORDS;
+}
+
+static void lb_compute(const GfxShader *cs);
+
+static void big_cs_main(void *arg) {
+    const GfxShader *cs = arg;
+    double t0 = now_ms();
+    lb_compute(cs);
+    rt_log("vk_pipeline: the large compute pipeline (spirv fnv %016llx) finished building after %.1f s",
+           (unsigned long long)gfx_shader_spirv_fnv(cs), (now_ms() - t0) / 1e3);
+}
+
+// Holding P.lock, for a compute shader with no pipeline yet: 1 when it is large and builds (or failed to build) in the
+// background, 0 when the caller builds it itself.
+static int big_cs_defer(const GfxShader *cs) {
+    if (!cs_is_big(cs)) return 0;
+    for (int i = 0; i < BIG.n; i++)
+        if (BIG.cs[i] == cs) return 1;
+    if (BIG.n >= BIG_CS_MAX) return 0;
+    BIG.cs[BIG.n++] = cs;
+    uint64_t words = 0;
+    gfx_shader_spirv(cs, &words);
+    rt_log("vk_pipeline: compute shader of %llu SPIR-V words (spirv fnv %016llx) builds on its own thread; dispatches "
+           "that use it are skipped until it is ready", (unsigned long long)words,
+           (unsigned long long)gfx_shader_spirv_fnv(cs));
+    if (!plat_thread_spawn(big_cs_main, (void *)cs, "big compute", 0)) {
+        BIG.n--;
+        return 0;
+    }
+    return 1;
+}
+
 VkPipeline vk_pipeline_compute(const GfxShader *cs, const VkPipeInfo **info) {
     if (info) *info = NULL;
     if (!cs || !ensure_init()) return VK_NULL_HANDLE;
@@ -2932,6 +2992,9 @@ VkPipeline vk_pipeline_compute(const GfxShader *cs, const VkPipeInfo **info) {
     Pipe *p = pipe_find(&k, sizeof k, h);
     if (p) {
         P.stats.hits++;
+    } else if (big_cs_defer(cs)) {
+        plat_mutex_unlock(&P.lock);
+        return VK_NULL_HANDLE;
     } else {
         const char *why = NULL;
         Bindings B = {0};
@@ -3122,7 +3185,7 @@ static void lb_worker(void *arg) {
             LB.noshader++;
             plat_mutex_unlock(&LB.stat);
         } else if (gfx_shader_stage(sh) == GFX_STAGE_CS) {
-            lb_compute(sh);
+            if (!cs_is_big(sh)) lb_compute(sh);   // a large one builds when a dispatch first needs it (big_cs_defer)
         } else if (gfx_shader_stage(sh) == GFX_STAGE_VS || gfx_shader_stage(sh) == GFX_STAGE_FS) {
             if (P.gpl) lb_library(sh, gfx_shader_stage(sh) == GFX_STAGE_VS, 1);
             else lb_skip_lib();

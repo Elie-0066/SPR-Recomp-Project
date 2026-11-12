@@ -166,8 +166,19 @@ static int pool_place(pool_t *o) {
 static int pool_gpu_visible(const pool_t *o) { return !(o->flags & NVN_MEMORY_POOL_FLAGS_GPU_NO_ACCESS); }
 
 // ---------- Device
+// The API minor version to report (devinfo[NVN_DEVICE_INFO_API_MINOR_VERSION]): each build has a version gate of its
+// own and this answers the first version that gate accepts, since that is the only thing the game tells us about the
+// NVN 2 it was built against. Base Bananza is built against 16 (its initializer, main+0x5b29a4, checks 231.16), its
+// update refuses anything below 30 (main+0x5c61ac), and Splatoon Raiders' graphics initializer skips creating the
+// device singleton below 39 (main+0x31b86b0 compares with 0x27 and bails). The API major version is 231 for both.
+int nvn_device_api_minor(void) {
+    if (!strcmp(rt_game_target, "dkb458752")) return 30;
+    if (!strcmp(rt_game_target, "raiders")) return 39;
+    return 16;
+}
+
 static const int devinfo[] = {   // Tegra X1 values (nnheaders nvn_DeviceConstantsNX.h, measured on SMO)
-    // Base Bananza requires 231.16 (main+0x5b29a4); the update's gate is handled below. The other limits remain Tegra X1 values.
+    // The other limits remain Tegra X1 values.
     [0x00] = 231, [0x01] = 16,
     [0x02] = 14, [0x03] = 65536, [0x04] = 256, [0x05] = 8, [0x06] = 16, [0x07] = 4, [0x08] = 16, [0x09] = 32,
     [0x0A] = 16, [0x0B] = 4, [0x0C] = 4, [0x0D] = 4, [0x0E] = 16, [0x0F] = 32, [0x10] = 32, [0x11] = 256, [0x12] = 256,
@@ -204,8 +215,7 @@ NVN_API(nvnDeviceGetInteger) {
     unsigned w = (unsigned)arg_x(c, 1);
     int *out = arg_p(c, 2);
     if (w >= sizeof devinfo / sizeof *devinfo) rt_fatal("nvn: unsupported NVN device property %#x", w);
-    // Update 458752's graphics initializer (main+0x5c61ac) rejects the base ABI before creating its device singleton.
-    *out = w == NVN_DEVICE_INFO_API_MINOR_VERSION && !strcmp(rt_game_target, "dkb458752") ? 30 : devinfo[w];
+    *out = w == NVN_DEVICE_INFO_API_MINOR_VERSION ? nvn_device_api_minor() : devinfo[w];
     // Entries the table leaves at 0 are defaults, not measured values; list each asked enum once.
     static volatile uint32_t zero_seen[4];
     if (!devinfo[w] && !(__atomic_fetch_or(&zero_seen[w / 32], 1u << (w % 32), __ATOMIC_RELAXED) & (1u << (w % 32))))
@@ -492,6 +502,25 @@ NVN_API(nvnSyncWait) {
     }
     if (ok) b->cpu_synced(s->fence);
     ret_x(c, ok ? NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED : NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED);
+}
+// NVNboolean nvnQueueWaitSync(NVNqueue *q, const NVNsync *s): block the guest queue caller until the recorded producer
+// fence has completed. An unfenced sync has no producer in this host model and therefore needs no wait.
+NVN_API(nvnQueueWaitSync) {
+    const sync_t *s = arg_p(c, 1);
+    if (!s || s->magic != SYNC_MAGIC || !s->fenced) { ret_x(c, 1); return; }
+    const GfxBackend *b = gfx_backend();
+    if (b->fence_done() >= s->fence) {
+        b->cpu_synced(s->fence);
+        ret_x(c, 1);
+        return;
+    }
+    int ok;
+    {
+        NVN_BLOCKING();
+        ok = b->fence_wait(s->fence, UINT64_MAX);
+    }
+    if (ok) b->cpu_synced(s->fence);
+    ret_x(c, (uint64_t)ok);
 }
 // void nvnEventBuilderSetDefaults(NVNeventBuilder *b)
 NVN_API(nvnEventBuilderSetDefaults) { memset(arg_p(c, 0), 0, sizeof(ev_builder_t)); }

@@ -185,7 +185,7 @@ static VkFormat g_vk_fmt;
 static float g_font_scale;        // the scale of the uploaded font atlas; 0 when none is uploaded
 static float g_style_scale;       // the scale the style was last sized for
 static ImGuiStyle g_base_style;   // the menu's style at 1080 lines
-static int g_theme = -1;          // the TOTK_MENU_THEME g_base_style was made for: 1 dk, 0 classic, -1 none yet
+static int g_theme = -1;          // 2 Raiders, 1 DK, 0 classic, -1 none yet
 static uint64_t g_last_ns;
 static uint64_t g_cost_ns, g_cost_frames;   // CPU time of layout and recording while open, logged per 600 frames
 
@@ -234,7 +234,39 @@ static void style_dk(ImGuiStyle &s) {
     c[ImGuiCol_ModalWindowDimBg] = rgb(0, 0, 0, 0.55f);
 }
 
-static void style_init(ImGuiStyle &s, bool dk) {
+static void style_raiders(ImGuiStyle &s) {
+    s.WindowRounding = 14; s.PopupRounding = 10; s.FrameRounding = 7; s.GrabRounding = 7; s.TabRounding = 7;
+    s.ChildRounding = 10; s.ScrollbarRounding = 8;
+    s.WindowBorderSize = 2; s.PopupBorderSize = 2; s.FrameBorderSize = 1;
+    ImVec4 *c = s.Colors;
+    ImVec4 ink = rgb(49, 225, 207), coral = rgb(255, 112, 87), deep = rgb(12, 29, 39);
+    c[ImGuiCol_WindowBg] = rgb(10, 22, 31, 0.97f);
+    c[ImGuiCol_PopupBg] = rgb(10, 22, 31, 0.99f);
+    c[ImGuiCol_Border] = rgb(36, 89, 100);
+    c[ImGuiCol_Text] = rgb(235, 249, 247);
+    c[ImGuiCol_TextDisabled] = rgb(158, 190, 190);
+    c[ImGuiCol_FrameBg] = deep;
+    c[ImGuiCol_FrameBgHovered] = rgb(23, 65, 73);
+    c[ImGuiCol_FrameBgActive] = rgb(30, 91, 97);
+    c[ImGuiCol_Button] = rgb(22, 58, 67);
+    c[ImGuiCol_ButtonHovered] = rgb(31, 111, 111);
+    c[ImGuiCol_ButtonActive] = rgb(39, 151, 143);
+    c[ImGuiCol_Tab] = deep;
+    c[ImGuiCol_TabHovered] = rgb(31, 111, 111);
+    c[ImGuiCol_TabSelected] = rgb(20, 83, 88);
+    c[ImGuiCol_TabDimmed] = c[ImGuiCol_Tab];
+    c[ImGuiCol_TabDimmedSelected] = c[ImGuiCol_TabSelected];
+    c[ImGuiCol_TabSelectedOverline] = c[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_NavCursor] = coral;
+    c[ImGuiCol_Separator] = rgb(36, 89, 100);
+    c[ImGuiCol_ScrollbarBg] = rgb(0, 0, 0, 0.25f);
+    c[ImGuiCol_ScrollbarGrab] = rgb(36, 115, 119);
+    c[ImGuiCol_ScrollbarGrabHovered] = ink;
+    c[ImGuiCol_ScrollbarGrabActive] = coral;
+    c[ImGuiCol_ModalWindowDimBg] = rgb(0, 0, 0, 0.58f);
+}
+
+static void style_init(ImGuiStyle &s, int theme) {
     ImGui::StyleColorsDark(&s);
     s.WindowRounding = 14; s.FrameRounding = 8; s.GrabRounding = 8; s.TabRounding = 8; s.ChildRounding = 10;
     s.WindowPadding = ImVec2(28, 22); s.FramePadding = ImVec2(14, 8); s.ItemSpacing = ImVec2(14, 12);
@@ -254,7 +286,8 @@ static void style_init(ImGuiStyle &s, bool dk) {
     c[ImGuiCol_TabSelectedOverline] = gold;
     c[ImGuiCol_NavCursor] = gold;
     c[ImGuiCol_Separator] = ImVec4(0.30f, 0.36f, 0.30f, 1);
-    if (dk) style_dk(s);
+    if (theme == 1) style_dk(s);
+    else if (theme == 2) style_raiders(s);
 }
 
 static void make_context(void) {
@@ -264,7 +297,7 @@ static void make_context(void) {
     io.LogFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
     io.BackendPlatformName = "totk_menu";
-    style_init(g_base_style, true);   // overlay_frame makes it again for the theme in the settings
+    style_init(g_base_style, 2);   // replaced with the selected target's theme on the first menu frame
     ImGui::GetStyle() = g_base_style;
     g_ctx_ok = 1;
 }
@@ -1026,6 +1059,20 @@ static void header_dk(float scale, const char *version) {
     ImGui::Dummy(ImVec2(w, hh));
 }
 
+static void header_raiders(float scale, const char *version) {
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float w = ImGui::GetContentRegionAvail().x, fs = ImGui::GetFontSize(), hh = fs * 2.0f;
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + hh), IM_COL32(49, 225, 207, 255), 9 * scale);
+    dl->AddRectFilled(ImVec2(p.x, p.y + hh - 5 * scale), ImVec2(p.x + w, p.y + hh), IM_COL32(255, 112, 87, 255),
+                      3 * scale, ImDrawFlags_RoundCornersBottom);
+    draw_display(dl, ImVec2(p.x + 16 * scale, p.y + fs * 0.42f), fs * 1.12f, IM_COL32(10, 35, 43, 255),
+                 "SPLATOON RAIDERS  \xC2\xB7  PC RECOMP", 2.0f * scale, scale);
+    float vw = ImGui::CalcTextSize(version).x;
+    dl->AddText(ImVec2(p.x + w - vw - 14 * scale, p.y + (hh - fs) * 0.5f), IM_COL32(10, 35, 43, 220), version);
+    ImGui::Dummy(ImVec2(w, hh));
+}
+
 static const UiTextId kTabNames[TAB_COUNT] = {UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND,
                                               UI_MENU_TAB_CONTROLS, UI_MENU_TAB_MENU, UI_MENU_TAB_ADVANCED};
 static int g_tab;               // the tab shown
@@ -1043,8 +1090,13 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
                                         ImGuiWindowFlags_NoSavedSettings);
     // the port version and the game update, right-aligned on the title line: what a bug report needs first
     char version[96];
-    snprintf(version, sizeof version, menu_text(UI_MENU_VERSION), rt_port_version, rt_game_display);
-    if (g_theme == 1) {
+    if (!strcmp(rt_game_target, "raiders"))
+        snprintf(version, sizeof version, "Splatoon Raiders Recomp %s, game %s", rt_port_version, rt_game_display);
+    else
+        snprintf(version, sizeof version, menu_text(UI_MENU_VERSION), rt_port_version, rt_game_display);
+    if (g_theme == 2) {
+        header_raiders(scale, version);
+    } else if (g_theme == 1) {
         header_dk(scale, version);
     } else {
         ImGui::TextColored(opt_accent(), "%s", menu_text(UI_MENU_TITLE));
@@ -1067,10 +1119,11 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
             snprintf(label, sizeof label, "  %s  ###tab%d", menu_text(kTabNames[k]), k);   // the id stays per language
             if (!ImGui::BeginTabItem(label, nullptr, g_tab_request == k ? ImGuiTabItemFlags_SetSelected : 0)) continue;
             g_tab = k;
-            if (g_theme == 1) {   // the DK tie's red under the selected tab
+            if (g_theme == 1 || g_theme == 2) {   // the theme's accent under the selected tab
                 ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+                ImU32 underline = g_theme == 2 ? IM_COL32(255, 112, 87, 255) : IM_COL32(200, 40, 30, 255);
                 ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(a.x + 6 * scale, b.y - 5 * scale),
-                                                          ImVec2(b.x - 6 * scale, b.y - 1 * scale), IM_COL32(200, 40, 30, 255),
+                                                          ImVec2(b.x - 6 * scale, b.y - 1 * scale), underline,
                                                           2 * scale);
             }
             if (g_focus_page == k) {
@@ -1101,7 +1154,7 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
     float y = ImGui::GetCursorPosY();
     if (!cfg_last_save_ok()) {   // stays until a save succeeds; the settings hold for the session
         ImGui::SetCursorPosY(y + st.FramePadding.y);
-        ImGui::TextColored(g_theme == 1 ? opt_warn() : ImVec4(0.95f, 0.45f, 0.35f, 1), "%s", menu_text(UI_MENU_SAVE_FAILED));
+        ImGui::TextColored(g_theme != 0 ? opt_warn() : ImVec4(0.95f, 0.45f, 0.35f, 1), "%s", menu_text(UI_MENU_SAVE_FAILED));
     }
     const char *cont = menu_text(UI_MENU_CONTINUE), *quit = menu_text(UI_MENU_QUIT);
     float bw = fmaxf(ImGui::CalcTextSize(cont).x, ImGui::CalcTextSize(quit).x) + st.FramePadding.x * 4;
@@ -1397,11 +1450,12 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
         set_open(0);
         return 0;
     }
-    int dk = strcmp(cfg_value("TOTK_MENU_THEME"), "classic") != 0;   // live: the next frame has the new look
-    if (dk != g_theme) {
-        style_init(g_base_style, dk);
-        opt_theme(dk);
-        g_theme = dk;
+    int theme = !strcmp(rt_game_target, "raiders") ? 2 :
+                strcmp(cfg_value("TOTK_MENU_THEME"), "classic") != 0 ? 1 : 0;
+    if (theme != g_theme) {
+        style_init(g_base_style, theme);
+        opt_theme(theme);
+        g_theme = theme;
         g_style_scale = 0;
     }
     if (g_style_scale != scale) {

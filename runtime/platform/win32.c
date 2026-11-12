@@ -155,6 +155,37 @@ int plat_intr_resume(PlatIntr *t, uint64_t to) {
     return ok;
 }
 
+int plat_intr_backtrace(PlatIntr *t, uint64_t *frames, int max) {
+    CONTEXT c = t->ctx;
+    int n = 0;
+    while (n < max && c.Rip) {
+        frames[n++] = c.Rip;
+        DWORD64 base;
+        PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(c.Rip, &base, NULL);
+        if (!rf) {   // a leaf without unwind data: the return address is at the stack pointer
+            if (!c.Rsp) break;
+            c.Rip = *(uint64_t *)c.Rsp;
+            c.Rsp += 8;
+            continue;
+        }
+        void *hd;
+        DWORD64 ef;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, c.Rip, rf, &c, &hd, &ef, NULL);
+    }
+    return n;
+}
+
+const char *plat_addr_describe(uint64_t addr, char *buf, int n) {
+    HMODULE m = NULL;
+    char path[MAX_PATH];
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)(uintptr_t)addr, &m) && GetModuleFileNameA(m, path, sizeof path)) {
+        const char *b = strrchr(path, '\\');
+        snprintf(buf, (size_t)n, "%s+%#llx", b ? b + 1 : path, (unsigned long long)(addr - (uint64_t)(uintptr_t)m));
+    } else snprintf(buf, (size_t)n, "%#llx", (unsigned long long)addr);
+    return buf;
+}
+
 // ---- fibers: Windows fibers with FIBER_FLAG_FLOAT_SWITCH (the MXCSR and x87 control word switch with them).
 struct PlatFiber {
     void *h;
@@ -611,8 +642,31 @@ static LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep) {
     uintptr_t rip = (uintptr_t)ep->ContextRecord->Rip;
     MODULEINFO mi;
     if (!GetModuleInformation(GetCurrentProcess(), GetModuleHandleW(NULL), &mi, sizeof mi) ||
-        rip - (uintptr_t)mi.lpBaseOfDll >= mi.SizeOfImage)
-        return EXCEPTION_CONTINUE_SEARCH;   // not our code: leave it to the handler that expects it
+        rip - (uintptr_t)mi.lpBaseOfDll >= mi.SizeOfImage) {
+        char buf[256];
+        {
+            MODULEINFO m2;
+            uintptr_t rbase = GetModuleInformation(GetCurrentProcess(), GetModuleHandleW(NULL), &m2, sizeof m2)
+                                  ? (uintptr_t)m2.lpBaseOfDll
+                                  : 0;
+            PlatCrash pc = {what, (uint32_t)code, rip, rip - rbase, -1, 0};
+            void *fr[24];
+            USHORT nf = RtlCaptureStackBackTrace(1, 24, fr, NULL);
+            if (code == EXCEPTION_ACCESS_VIOLATION && ep->ExceptionRecord->NumberParameters >= 2)
+                pc.access = (int)ep->ExceptionRecord->ExceptionInformation[0],
+                pc.addr = ep->ExceptionRecord->ExceptionInformation[1];
+            for (USHORT i = 0; i < nf && pc.nframes < (int)(sizeof pc.frames / sizeof *pc.frames); i++)
+                pc.frames[pc.nframes++] = (uintptr_t)fr[i];
+            crash_fn(&pc);
+            int n = snprintf(buf, sizeof buf, "probe: crash reported\n");
+            if (n > 0) {
+                DWORD w = 0;
+                WriteFile(GetStdHandle(STD_ERROR_HANDLE), buf, (DWORD)n, &w, NULL);
+            }
+            (void)buf;
+        }
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
     PlatCrash c = {what, (uint32_t)code, rip, rip - (uintptr_t)mi.lpBaseOfDll, -1, 0};
     if (code == EXCEPTION_ACCESS_VIOLATION && ep->ExceptionRecord->NumberParameters >= 2)
         c.access = (int)ep->ExceptionRecord->ExceptionInformation[0], c.addr = ep->ExceptionRecord->ExceptionInformation[1];

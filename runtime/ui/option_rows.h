@@ -17,7 +17,7 @@ extern "C" {
 
 // The row colours: true the Donkey Kong palette, false the classic one (menu.cpp picks it from TOTK_MENU_THEME). opt_accent
 // and opt_warn: the heading and warning text colours of the chosen palette.
-void opt_theme(bool dk);
+void opt_theme(int theme);
 ImVec4 opt_accent(void);
 ImVec4 opt_warn(void);
 

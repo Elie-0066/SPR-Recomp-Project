@@ -83,7 +83,7 @@ UCRT = Path(r'C:\msys64\ucrt64\bin')
 EXE = 'dkb.exe' if WIN else 'dkb'   # DKB Recomp: not TotK's executable
 # A version name that is a game of its own in this checkout gets its own executable (--exe overrides either). Splatoon
 # Raiders was lifted into generated/raiders and shares nothing with the DKB builds but the runtime.
-GAME_EXE = {'raiders': 'raiders'}
+GAME_EXE = {'raiders': 'splatoon-raiders'}
 
 
 def on_path(name):
@@ -910,7 +910,7 @@ def main():
     if missing:
         sys.exit(f'{expected}: no exefs_sha256 for {missing}')
     write_if_changed(out / 'modules.c', module_glue(layout, linked, hashes, paths, args.version, expected_data))
-    if (paths['romfs'] / 'index.json').is_file():
+    if paths['romfs'].is_dir() and ((paths['romfs'] / 'index.json').is_file() or args.version == 'raiders'):
         count, size, dt = romfs_index.write(paths['romfs'], out)
         print(f'romfs index: {count} files, {mib(size)}, {dt:.1f} s')
     else:

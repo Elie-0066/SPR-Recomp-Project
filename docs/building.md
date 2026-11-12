@@ -128,20 +128,20 @@ Settings live in `totk.ini` next to `totk.exe` ([totk.ini.example](../totk.ini.e
 
 ### Splatoon Raiders
 
-Splatoon Raiders needs no extraction step: `recomp/gen.py` reads the NSO files of an ExeFS directory in place. The
-`raiders` target has its own executable name (`raiders.exe`) and no patch sets, and without
-`tools/data/expected-raiders.json` it records the SHA-256 of the ExeFS it was built from, so `raiders.exe` still
-refuses to boot a different dump:
+Raiders reads the extracted Switch 2 dump in place. Set the base, update, and keys paths in the ignored
+`config.local.toml`; the current target is update `65536`. The lifter reads the update ExeFS directly, and the runtime
+reads the merged update RomFS directory without making a packed copy. The build also writes an ExeFS hash beside the
+executable so it refuses to start with a different dump:
 
 ```powershell
 .venv\Scripts\python recomp\gen.py --exefs "<dump>\updates\65536\exefs" --out generated\raiders
 .venv\Scripts\python tools\build_game.py --version raiders --exefs "<dump>\updates\65536\exefs" --romfs "<dump>\updates\65536\romfs"
 ```
 
-`main`, `sdk` and `subsdk0` lift to 1.1 GB of C in about two and a half minutes; the clean compile takes longer than
-DKB's. The RomFS needs `index.json` and `romfs.bin` (a packed image) as on the TotK path, so a dump without them builds
-with a warning and boots without assets. `--display` names the build in the settings menu; `--exe` renames the
-executable.
+The generated C is about 1.1 GB across `main`, `sdk`, and `subsdk0`. The current executable is
+`build\raiders\raiders.exe`; the shaders are prepared separately with the shader commands above. Current status: the
+executable reaches game startup and mounts RomFS, but it still hits an access violation before the first rendered
+frame. A successful compile does not yet mean the game is playable.
 
 ### Portable folder
 

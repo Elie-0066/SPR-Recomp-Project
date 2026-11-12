@@ -602,7 +602,8 @@ static VkImageView get_view(VkExec *ex, const VkTexImage *img, const view_t *v, 
     case VK_IMAGE_VIEW_TYPE_3D: ok = img->type == VK_IMAGE_TYPE_3D; break;
     case VK_IMAGE_VIEW_TYPE_CUBE:
     case VK_IMAGE_VIEW_TYPE_CUBE_ARRAY:
-        ok = img->type == VK_IMAGE_TYPE_2D && (img->view_type == VK_IMAGE_VIEW_TYPE_CUBE || img->view_type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY);
+        ok = img->type == VK_IMAGE_TYPE_2D && (img->view_type == VK_IMAGE_VIEW_TYPE_CUBE || img->view_type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY ||
+                                            img->cube_compat);
         break;
     default: ok = img->type == VK_IMAGE_TYPE_2D; break;
     }
@@ -2403,9 +2404,10 @@ typedef struct {
 static int light_quad_fault_skip(const VkExec *ex, const GfxShader *vs, const GfxShader *fs) {
     static int on = -1;
     if (on < 0) {
-        // 0: Bananza. TOTK_FIX_VS_FAULT=all runs the skip on every vendor, to A/B the AMD device loss against it.
+        // 0: Bananza (not Splatoon Raiders: the same light quads are its lighting, and the fault is Bananza's).
+        // TOTK_FIX_VS_FAULT=all runs the skip on every vendor, to A/B the AMD device loss against it.
         int nv = vk_ctx()->props.vendorID == 0x10de;
-        on = !rt_game_version && cfg_bool("TOTK_FIX_VS_FAULT") && (nv || !strcasecmp(cfg_value("TOTK_FIX_VS_FAULT"), "all"));
+        on = !rt_game_version && strcmp(rt_game_target, "raiders") && cfg_bool("TOTK_FIX_VS_FAULT") && (nv || !strcasecmp(cfg_value("TOTK_FIX_VS_FAULT"), "all"));
         if (on && !nv) rt_log("vk: TOTK_FIX_VS_FAULT=all: the light quad skip (#9) also runs on this non-NVIDIA GPU");
     }
     if (!on || !vs || !fs) return 0;
@@ -2748,7 +2750,22 @@ static int prepare_draw_impl(VkExec *ex, int prim, int32_t count, int restart) {
                pending ? ", skipped after all" : "", count, ex->pass_w, ex->pass_h, tg);
     }
     DP_MARK(DP_PIPE);
-    if (pending) return 0;   // a background worker is building it: the draw is skipped until it is ready
+    if (pending) {   // a background worker is building it: the draw is skipped until it is ready
+        // Bring-up (shadows that flicker): skipped draws by pass size, reported every 120 frames while there are any.
+        static struct { uint32_t w, h; uint64_t n; } sk[8];
+        static uint64_t sk_report;
+        uint64_t f = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
+        int k = 0;
+        while (k < 7 && sk[k].n && (sk[k].w != ex->pass_w || sk[k].h != ex->pass_h)) k++;
+        sk[k].w = ex->pass_w, sk[k].h = ex->pass_h, sk[k].n++;
+        if (f >= sk_report + 120) {
+            sk_report = f;
+            for (int i = 0; i < 8; i++)
+                if (sk[i].n) rt_log("vk_exec: frame %llu: %llu draws skipped so far in passes of %ux%u", (unsigned long long)f,
+                                    (unsigned long long)sk[i].n, sk[i].w, sk[i].h);
+        }
+        return 0;
+    }
     if (!p || !info) return warn_once(W_PIPELINE, "a graphics pipeline could not be created: draws with it are skipped"), 0;
     bind_pipeline(ex, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
     if (!B.st_valid || memcmp(&B.st, &s, sizeof s)) {
@@ -2990,13 +3007,13 @@ static int blit_ok(VkFormat f, int dst) {
 
 // Records the blit in place of the dispatch; 0 when this is not the upscaler or the blit cannot be done (the shader
 // then runs). The caller has already put a full barrier before it (vk_exec_barrier in op_dispatch) and puts one after.
-static int mvk_upscale_blit(VkExec *ex, const GfxShader *cs) {
+static int mvk_upscale_blit(VkExec *ex, const GfxShader *cs, int force) {
     static int on = -1;
     if (on < 0) on = vk_caps.moltenvk && cfg_bool("TOTK_MVK_UPSCALE_BLIT");
     // The hash is kept with the shader (gfx_shader_spirv_fnv): a cache of the last shader alone missed on nearly every
     // dispatch, as dispatches alternate between compute shaders, and hashing the whole SPIR-V each time took about 12%
     // of the replaying thread on an M4.
-    if (!on || !mvk_upscale_cs(gfx_shader_spirv_fnv(cs))) return 0;
+    if (!force && (!on || !mvk_upscale_cs(gfx_shader_spirv_fnv(cs)))) return 0;
     uint64_t hs = ex->tex[NVN_STAGE_CS][0], hd = ex->img[NVN_STAGE_CS][1];
     view_t vs, vd;
     int hvs = 0, hvd = 0;
@@ -3081,6 +3098,38 @@ static void note_upscaler(VkExec *ex, const GfxShader *cs) {
     if (s && t) res_note_upscaler(s->width, s->height, t->width, t->height);
 }
 
+// Splatoon Raiders upscales its 1280x720 frame to 1920x1080 with a neural-network compute shader of 2.3 million
+// SPIR-V words (about 71,000 variables). The NVIDIA driver takes minutes to compile it, and its output is the picture
+// the game presents, so until the network is translated for real the dispatch is replaced by a linear blit.
+static int raiders_upscaler(const GfxShader *cs) {
+    uint64_t words = 0;
+    gfx_shader_spirv(cs, &words);
+    return words > 1000000;
+}
+
+// Raiders bring-up: the first 64 distinct compute shaders dispatched, with the size of their first sampled texture and
+// second storage image, so the log shows which dispatch produces the final image (compare the large one that is
+// skipped while it builds, vk_pipeline.c big_cs_defer).
+static void log_dispatch_once(VkExec *ex, const GfxShader *cs, const p_dispatch *d) {
+    static uint64_t seen[64];
+    static int nseen;
+    uint64_t h = gfx_shader_spirv_fnv(cs);
+    int i = 0;
+    while (i < nseen && seen[i] != h) i++;
+    if (i < nseen || nseen >= 64) return;
+    seen[nseen++] = h;
+    uint64_t ds = ex->tex[NVN_STAGE_CS][0], dd = ex->img[NVN_STAGE_CS][1];
+    view_t ws, wd;
+    int hws = 0, hwd = 0;
+    const VkTexImage *a = ds ? vk_texture_by_id(&ex->tex_pool, NVN_HANDLE_TEX(ds), &ws, &hws) : NULL;
+    const VkTexImage *b = dd ? vk_texture_by_id(&ex->tex_pool, NVN_HANDLE_TEX(dd), &wd, &hwd) : NULL;
+    uint64_t words = 0;
+    gfx_shader_spirv(cs, &words);
+    rt_log("vk_exec: first dispatch of compute shader %016llx (%llu words) groups %dx%dx%d: tex0 %ux%u fmt %d, img1 %ux%u fmt %d",
+           (unsigned long long)h, (unsigned long long)words, d->x, d->y, d->z, a ? a->width : 0, a ? a->height : 0,
+           a ? (int)a->format : 0, b ? b->width : 0, b ? b->height : 0, b ? (int)b->format : 0);
+}
+
 static void op_dispatch(VkExec *ex, const p_dispatch *d) {
     if (d->x <= 0 || d->y <= 0 || d->z <= 0) return;
     static int skip = -1;   // DKB_SKIP_COMPUTE=1: drop every direct dispatch (bisecting GPU faults)
@@ -3092,6 +3141,20 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
     int present;
     const GfxShader *cs = shader_for(ex, NVN_STAGE_CS, &present, NULL, 0);   // synchronous: a skipped dispatch changes results
     if (!cs) return;
+    log_dispatch_once(ex, cs, d);
+    if (raiders_upscaler(cs)) {   // never compiled: the driver needs minutes for it, and a blit stands in for its output
+        vk_exec_barrier(ex);
+        if (mvk_upscale_blit(ex, cs, 1)) {
+            static int once;
+            if (!once++)
+                rt_log("vk_exec: Splatoon Raiders' upscaler network (a compute shader of over a million SPIR-V words) is "
+                       "replaced by a linear blit of its input to its output");
+            ex->recorded++;
+            vk_exec_barrier(ex);
+            note_upscaler(ex, cs);
+            return;
+        }
+    }
     const VkPipeInfo *info = NULL;
     VkPipeline p = vk_pipeline_compute(cs, &info);
     if (!p || !info) return warn_once(W_PIPELINE, "a compute pipeline could not be created: dispatches with it are skipped");
@@ -3103,7 +3166,7 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
     bind_resources(ex, info);
     twin_dispatch = 0;
     note_upscaler(ex, cs);
-    int blit = mvk_upscale_blit(ex, cs);
+    int blit = mvk_upscale_blit(ex, cs, 0);
     int dlss = blit ? 0 : dlss_upscale(ex, cs);
     if (dlss) vk_exec_draw_new_cb(), ex->dirty = VK_EXEC_DIRTY_ALL;   // NGX left its own pipeline, descriptors and state
     if (dlss < 0) {                    // it failed: the game's upscaler runs on its own binds again

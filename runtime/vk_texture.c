@@ -340,8 +340,14 @@ static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
     // the image's own view type). The flag on every square array of 6+ layers changed how AMD's Windows driver lays such
     // an image out, and terrain material arrays sampled through it came out in rainbow blocks that moved with the mip
     // level (Savage Wind Recomp issue #59, BotW on an RX 580 and a 7800 XT).
+    // Splatoon Raiders makes its sky and probe cubemaps as 2D-array textures of 6 layers and samples them through
+    // cube descriptors: there the flag goes on square arrays whose layer count is a multiple of 6, or the cube view is
+    // refused and the shader reads a black stand-in (the cube conversion pass for its reflection probes came out black).
+    static int raiders = -1;
+    if (raiders < 0) raiders = !strcmp(rt_game_target, "raiders");
     if (type == VK_IMAGE_TYPE_2D && layers >= 6 && w == h && samples == 1 &&
-        (d->target == NVN_TEXTURE_TARGET_CUBEMAP || d->target == NVN_TEXTURE_TARGET_CUBEMAP_ARRAY))
+        (d->target == NVN_TEXTURE_TARGET_CUBEMAP || d->target == NVN_TEXTURE_TARGET_CUBEMAP_ARRAY ||
+         (raiders && d->target == NVN_TEXTURE_TARGET_2D_ARRAY && layers % 6 == 0)))
         flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
     // NVN renders into a 3D texture slice by slice (a view's min layer is the depth plane, nvn_mtl.m), e.g. the
     // grading LUT of the menu background blur. Vulkan needs a 2D view of the slice for that.
@@ -415,6 +421,7 @@ static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
     p->format = f.vk;
     p->type = type;
     p->usage = usage;
+    p->cube_compat = (flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) != 0;
     p->aspect = aspect_of(&f);
     p->width = w, p->height = h, p->depth = depth, p->levels = levels, p->layers = layers, p->samples = samples;
     p->view_type = type == VK_IMAGE_TYPE_1D ? (d->target == NVN_TEXTURE_TARGET_1D_ARRAY ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_1D)
@@ -1022,6 +1029,25 @@ void vk_texture_gpu_written(const tex_t *t) {
     lock();
     Tex *e = entry_of(t);
     if (e) {
+        // Raiders bring-up: which layered textures the GPU writes, once per address and the number of writes so far.
+        static struct { uint64_t addr; uint32_t n; } lseen[64];
+        static int nl;
+        if (e->pub.layers > 1) {
+            int k = 0;
+            while (k < nl && lseen[k].addr != e->pub.addr) k++;
+            if (k == nl && nl < 64) lseen[nl++].addr = e->pub.addr;
+            static int probe_dump;
+            if (e->pub.layers == 78 && vk_dump_armed && !probe_dump &&
+                __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED) > 200) {
+                probe_dump = 1;
+                vk_dump_request_in(4);   // the arrays are baked again every 4 frames
+            }
+            if (k < nl && (++lseen[k].n == 1 || lseen[k].n == 100))
+                rt_log("vk: gpu write %u to layered texture %#llx fmt %#x %ux%u, %u layers, %u levels (frame %llu)",
+                       lseen[k].n, (unsigned long long)e->pub.addr, e->t.d.format, e->t.d.width, e->t.d.height,
+                       e->pub.layers, e->pub.levels,
+                       (unsigned long long)__atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED));
+        }
         make_fresh(e);   // a partial render keeps what the storage held before
         e->pub.gpu_owned = 1;
         uint64_t f = vk_exec_recording_fence();

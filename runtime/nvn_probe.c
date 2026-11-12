@@ -94,7 +94,7 @@ static void probe_device_and_pools(void) {
     int abi[2] = {0, 0};
     CALL(nvnDeviceGetInteger, U(&dev), 0, U(&abi[0]));
     CALL(nvnDeviceGetInteger, U(&dev), 1, U(&abi[1]));
-    int minor = !strcmp(rt_game_target, "dkb458752") ? 30 : 16;
+    int minor = nvn_device_api_minor();
     CHECK(abi[0] == 231 && abi[1] == minor, "device ABI %d.%d (expected 231.%d)", abi[0], abi[1], minor);
 
     pmem = mem_kernel_alloc(PROBE_POOL_SIZE, 0x1000);

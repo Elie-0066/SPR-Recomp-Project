@@ -235,6 +235,55 @@ static __attribute__((noinline)) void dispatch_preempt(Cpu *c) {
 // Jump to the guest address in c->pc. Always a tail call, so chains of indirect jumps keep the host stack flat. A
 // pending preempt request costs two loads and a branch to check.
 void rt_dispatch(Cpu *c) {
+    if (c->pc == 0x7005611940ull) {
+        char s[64] = {0};
+        if (c->x[1] && plat_mem_readable(c->x[1], 1))
+            for (int i = 0; i < 63 && plat_mem_readable(c->x[1] + (uint64_t)i, 1); i++) s[i] = (char)LD8(c->x[1] + (uint64_t)i);
+        rt_logf("fss-probe: name=\"%s\" x0=%#llx x2=%#llx x3=%#llx w4=%#llx w5=%#llx x6=%#llx\n", s,
+                (unsigned long long)c->x[0], (unsigned long long)c->x[2], (unsigned long long)c->x[3],
+                (unsigned long long)(uint32_t)c->x[4], (unsigned long long)(uint32_t)c->x[5],
+                (unsigned long long)c->x[6]);
+    }
+    if (c->pc == 0x700564ca38ull || c->pc == 0x700564ca54ull)
+        rt_logf("ttf-probe: pc=%#llx x19=%#llx x20=%#llx x21=%#llx w3=%#llx w22=%#llx w23=%#llx sp=%#llx\n",
+                (unsigned long long)c->pc, (unsigned long long)c->x[19], (unsigned long long)c->x[20],
+                (unsigned long long)c->x[21], (unsigned long long)(uint32_t)c->x[3],
+                (unsigned long long)(uint32_t)c->x[22], (unsigned long long)(uint32_t)c->x[23],
+                (unsigned long long)c->sp);
+    if (c->pc == 0x70008109d8ull)
+        rt_logf("ttf-probe: registry x21=%#llx words=%#llx %#llx %#llx %#llx\n",
+                (unsigned long long)c->x[21], (unsigned long long)LD64(c->x[21]),
+                (unsigned long long)LD64(c->x[21] + 8), (unsigned long long)LD64(c->x[21] + 16),
+                (unsigned long long)LD64(c->x[21] + 24));
+    if (c->pc == 0x700564b700ull && plat_mem_readable(c->x[1], 0xf0)) {
+        rt_logf("ttf-probe: stream=%#llx base=%#llx delta=%#llx off=%#llx size=%#llx lr=%#llx\n",
+                (unsigned long long)c->x[1], (unsigned long long)LD64(c->x[1] + 8),
+                (unsigned long long)(uint32_t)LD32(c->x[1] + 0xe8), (unsigned long long)(uint32_t)c->x[2],
+                (unsigned long long)(uint32_t)c->x[3], (unsigned long long)c->x[30]);
+        if (LD64(c->x[1] + 8) >= 0x7010000000ull && LD64(c->x[1] + 8) < 0x7020000000ull)
+            for (int i = 0; i < 0x100 / 8; i += 4)
+                rt_logf("ttf-probe:   [%#x] %016llx %016llx %016llx %016llx\n", i * 8,
+                        (unsigned long long)LD64(c->x[1] + (uint64_t)i * 8),
+                        (unsigned long long)LD64(c->x[1] + (uint64_t)i * 8 + 8),
+                        (unsigned long long)LD64(c->x[1] + (uint64_t)i * 8 + 16),
+                        (unsigned long long)LD64(c->x[1] + (uint64_t)i * 8 + 24));
+    }
+    if (c->x[30] == 0x7000810894ull)
+        rt_logf("font-probe: callback -> %#llx (x3=%#llx x4=%#llx w5=%#llx)\n", (unsigned long long)c->pc,
+                (unsigned long long)c->x[3], (unsigned long long)c->x[4], (unsigned long long)c->x[5]);
+    if (c->pc == 0x70036c8020ull && plat_mem_readable(c->x[1], 1)) {
+        char s[64] = {0};
+        for (int i = 0; i < 63 && plat_mem_readable(c->x[1] + (uint64_t)i, 1); i++) s[i] = (char)LD8(c->x[1] + (uint64_t)i);
+        rt_logf("font-probe: name=\"%s\" out=%#llx mode=%#llx\n", s, (unsigned long long)c->x[0],
+                (unsigned long long)(plat_mem_readable(c->x[3], 1) ? LD8(c->x[3]) : 0xff));
+    }
+    if (c->pc == 0x70031bb800ull) {
+        uint64_t obj = LD64(0x7004c4b648ull);
+        rt_logf("boot-probe: target x0=%#llx lr=%#llx obj=%#llx words=%#llx,%#llx,%#llx,%#llx\n",
+                (unsigned long long)c->x[0], (unsigned long long)c->x[30], (unsigned long long)obj,
+                (unsigned long long)LD64(obj), (unsigned long long)LD64(obj + 8),
+                (unsigned long long)LD64(obj + 16), (unsigned long long)LD64(obj + 24));
+    }
     if (__builtin_expect(c->thread && kern_preempt_pending(c->thread), 0))
         __attribute__((musttail)) return dispatch_preempt(c);
     uint64_t i = __builtin_rotateright64(c->pc - D.lo, 2);

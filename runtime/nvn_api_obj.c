@@ -525,8 +525,9 @@ NVN_API(nvnProgramInitializeFromBuilder) {
     ret_x(c, prog_set_shaders(o, (int)b->nstage, b->sd));
 }
 
-// NVNboolean nvnProgramSetShadersExt(NVNprogram *p, int n, const NVNshaderDataExt *sd): no prototype in nvn.h; the
-// entries are {data, control, reserved} (0x18 bytes, reserved observed 0)
+// NVNboolean nvnProgramSetShadersExt(NVNprogram *p, int n, const NVNshaderDataExt *sd): the 0x18-byte entries start
+// with the same data and control pointers as NVNshaderData. Raiders also fills the final word; this Vulkan path does
+// not consume that extra metadata, so retain the two shader inputs and ignore the opaque field.
 typedef struct { NVNbufferAddress data; const void *control; uint64_t reserved; } shader_data_ext;
 _Static_assert(sizeof(shader_data_ext) == 0x18, "NVNshaderDataExt stride");
 NVN_API(nvnProgramSetShadersExt) {
@@ -541,8 +542,6 @@ NVN_API(nvnProgramSetShadersExt) {
     }
     NVNshaderData plain[6];
     for (int i = 0; i < n; i++) {
-        if (sd[i].reserved)
-            rt_fatal("nvn: ProgramSetShadersExt: unknown non-zero field %#llx in stage %d", (unsigned long long)sd[i].reserved, i);
         plain[i] = (NVNshaderData){sd[i].data, sd[i].control};
     }
     ret_x(c, prog_set_shaders(o, n, plain));

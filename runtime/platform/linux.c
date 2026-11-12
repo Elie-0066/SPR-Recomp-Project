@@ -258,6 +258,13 @@ int plat_intr_stop(PlatIntr *t, uint64_t *rip, uint64_t *rsp) {
     return 1;
 }
 
+int plat_intr_backtrace(PlatIntr *t, uint64_t *frames, int max) { (void)t; (void)frames; (void)max; return 0; }
+
+const char *plat_addr_describe(uint64_t addr, char *buf, int n) {
+    snprintf(buf, (size_t)n, "%#llx", (unsigned long long)addr);
+    return buf;
+}
+
 int plat_intr_resume(PlatIntr *t, uint64_t to) {
     t->to = to;
     __atomic_store_n(&t->state, INTR_GO, __ATOMIC_RELEASE);
