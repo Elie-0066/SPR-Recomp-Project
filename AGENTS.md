@@ -1,4 +1,4 @@
-# Splatoon Raiders Recomp
+# SPR Recomp
 
 > **This is a fork of DKB Recomp retargeted from Donkey Kong Bananza to Splatoon Raiders (Switch 2).** The lifter,
 > Horizon host and Vulkan back end are largely retained from DKB Recomp and its upstream base, TotK Recomp. Read

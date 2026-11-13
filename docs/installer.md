@@ -1,5 +1,38 @@
 # Installer
 
+## SPR Recomp (Splatoon Raiders update 65536)
+
+`installer/raiders.py`, selected with `--game raiders` (the window's default profile). It takes one `.nup` file, or the
+update's ExeFS folder and a complete loose RomFS folder (the base RomFS with the update's laid over it, as dump tools
+write it). No keys are requested, and NSP or XCI files are not read. One build is supported, update title version
+65536, pinned by the SHA-256 of all five ExeFS files (`tools/data/expected-raiders.json`); any other ExeFS stops the
+check step before anything is written.
+
+```
+python -m installer --game raiders --nup "<dump>/raiders.nup" --dest "<install folder>" [--package "<tools>"] --jobs 8
+python -m installer --game raiders --exefs "<dump>/updates/65536/exefs" --romfs "<dump>/updates/65536/romfs" --dest "<install folder>" --jobs 8
+```
+
+What differs from Bananza (below), whose path checks, locks, translator step, host check and step ids it reuses:
+
+- **RomFS.** The runtime reads it as a loose folder (`tools/romfs_index.py`), so nothing is packed. A RomFS folder is
+  used where it is: the executable records its path, so it must stay there (setup lists its files, without hashing
+  them). A `.nup` is extracted loose into `<dest>/romfs` with `tools/extract_nup.py --select latest` (every file checked
+  against its SHA-256 record), inside the install folder so the 13 GB tree is renamed into place, not copied.
+- **Lift.** `recomp/gen.py` lifts all three modules (`main`, `sdk`, `subsdk0`) without patch sets.
+- **Compile.** `tools/build_game.py --version raiders` links `spr-recomp.exe` against the recorded RomFS folder.
+- **Shaders.** `tools/shader_census.py --out <work> --seed <dest>/seed-nvn2.bin` lists the NVN 2 stages, then
+  `spr-recomp.exe --translate-shaders` and `--warm-shaders` fill the caches, as for Bananza.
+- **State.** `spr-install.json` in the install folder; the generated C and the objects stay in the work folder, so a
+  newer runtime recompiles only the runtime.
+- **Tools.** A tool package (`--package`, layout below) or, in a checkout without one, MSYS2 UCRT64 as
+  [building.md](building.md) sets it up: its clang, ninja and SDL3, Opus and libiconv DLLs (`raiders.py`
+  `msys2_layout`). The shader translator is reused from `build/xlate` when its `.id` matches, else built with .NET 10.
+- **Space.** About 3 GB in the install folder plus the RomFS of a `.nup` (13 GB), and 6 GB of work space.
+
+There is no SPR release folder yet (`tools/make_release.py --game dkb` makes Bananza's): the profile runs from a
+checkout of this repository.
+
 ## Bananza 1.0.0 and 3.2.0
 
 The installer takes the game as one `.nup` file, or as an already dumped ExeFS (`main`, `sdk`, `rtld`, `main.npdm`)

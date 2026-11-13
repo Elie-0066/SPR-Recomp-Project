@@ -2614,13 +2614,16 @@ static int light_quad_fault_skip(const VkExec *ex, const GfxShader *vs, const Gf
 // Splatoon Raiders: an iterative full-screen pass (NVN 2 fragment stage 3f6af34afb0c405a) is drawn some 285 times per
 // frame into 880x880 targets in the character creator and the hub. The dumps show its colour targets entirely zero, its
 // shader kills nearly every pixel, and one submission of 64 of its draws took 107 ms on a GPU that draws the rest of the
-// frame in 5 ms: it holds the game at 18-19 fps. TOTK_RAIDERS_SKIP_880=0 draws it again.
+// frame in 5 ms: it held the game at 18-19 fps. These draws are the ink: the hub's ink map is 880x880 (the levels'
+// maps have other sizes), and skipping them left the hub's ground uninkable. Since the later fixes (the present wait,
+// the deferred uniform updates) drawing them costs no measurable frame rate, so they are drawn by default;
+// TOTK_RAIDERS_SKIP_880=1 skips them again.
 static int raiders_skip_880(const VkExec *ex) {
     static int on = -1;
     if (on < 0) {
         on = !strcmp(rt_game_target, "raiders") && cfg_bool("TOTK_RAIDERS_SKIP_880");
         if (on) rt_log("vk_exec: Splatoon Raiders: draws of fragment stage 3f6af34afb0c405a (285 full-screen passes per frame, "
-                       "all empty in the dumps) are skipped; TOTK_RAIDERS_SKIP_880=0 draws them");
+                       "the hub's ink) are skipped (TOTK_RAIDERS_SKIP_880=1)");
     }
     if (!on || ex->pass_w != 880 || ex->pass_h != 880) return 0;
     const uint8_t *ctl, *code = NULL;

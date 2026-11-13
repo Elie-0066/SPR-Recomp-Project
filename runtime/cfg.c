@@ -146,7 +146,7 @@ static const CfgMeta metas[] = {
     {"TEX_ALIAS", "1", "0|1", RESTART}, {"TEX_HASH", "1", "0|1", RESTART}, {"TEX_VRAM_PRESSURE", "90", "0..100", RESTART}, {"ASTC_BC", "0", "0|1", RESTART}, {"ZSTD_NATIVE", "1", "0|1", RESTART}, {"ZSTD_CHECK", "0", "0|1", RESTART},
     // render fixes
     {"EXPERIMENTAL_GEOMETRY", "0", "0|1", RESTART}, {"NATIVE_GS", "1", "0|1", RESTART},
-    {"MVK_UPSCALE_BLIT", "1", "0|1", RESTART}, {"RAIDERS_SKIP_880", "1", "0|1", RESTART},
+    {"MVK_UPSCALE_BLIT", "1", "0|1", RESTART}, {"RAIDERS_SKIP_880", "0", "0|1", RESTART},
     {"LOD_GUARD", "1", "0|1", RESTART}, {"FIX_C0", "1", "0|1", RESTART}, {"FIX_INDIRECT_RESET", "1", "0|1", RESTART}, {"FIX_VS_FAULT", "1", "0|1|all", RESTART}, {"FIX_ZERO", "1", "0|1", RESTART}, {"FIX_SCREEN_UV", "1", "0|1", RESTART}, {"LIST_RESTART", "1", "0|1", RESTART},
     {"BIND_SKIP", "1", "0|1", RESTART}, {"SHADER_MEMO", "1", "0|1", RESTART}, {"PIPE_MEMO", "1", "0|1", RESTART}, {"TEX_MEMO", "1", "0|1", RESTART},
     {"DESC_TEMPLATE", "1", "0|1", RESTART},

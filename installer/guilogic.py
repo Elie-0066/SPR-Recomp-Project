@@ -27,6 +27,11 @@ TEXT = Path(__file__).resolve().parent / 'text'
 UI_LANGUAGES = ('en', 'ru')
 STEP_ORDER = ('check', 'extract', 'lift', 'compile', 'prepare', 'cleanup')
 DKB_STEP_ORDER = ('check', 'dkb_data', 'dkb_translator', 'lift', 'compile', 'dkb_shaders', 'dkb_verify', 'cleanup')
+# The profiles that install from a .nup or ExeFS and RomFS folders, with the step list above (installer/bananza.py,
+# installer/raiders.py); totk is the NSP/XCI one.
+NUP_GAMES = ('bananza', 'raiders')
+GAME_EXES = {'bananza': 'dkb', 'raiders': 'spr-recomp'}
+STATE_FILES = {'bananza': 'dkb-install.json', 'raiders': 'spr-install.json'}
 # message parameter -> catalog id prefix of the names that replace its raw values
 PARAM_NAMES = {'lang': 'lang.', 'known': 'lang.', 'step': 'step.', 'input': 'param.input.'}
 LANG_RU = 0x19   # primary language id of Russian in a Windows LANGID
@@ -53,14 +58,19 @@ class Catalog:
         return id in self.texts or id in self.english
 
     def __call__(self, id, **params):
-        if self.game == 'bananza' and self.has('dkb.' + id):
+        # Raiders' own text first (spr.<id>, or spr.<rest> for a dkb.<rest> id), then Bananza's, which it shares.
+        if self.game == 'raiders':
+            own = 'spr.' + (id[4:] if id.startswith('dkb.') else id)
+            if self.has(own):
+                id = own
+        if self.game in NUP_GAMES and not id.startswith(('dkb.', 'spr.')) and self.has('dkb.' + id):
             id = 'dkb.' + id
         text = self.texts.get(id) or self.english.get(id)
         if text is None:
             return id
         values = {k: self.param(k, v) for k, v in params.items()}
-        if self.game == 'bananza':
-            values['game_exe'] = 'dkb.exe' if os.name == 'nt' else 'dkb'
+        if self.game in NUP_GAMES:
+            values['game_exe'] = GAME_EXES[self.game] + ('.exe' if os.name == 'nt' else '')
         return render({id: text}, id, values)
 
     def param(self, name, value):
@@ -131,7 +141,7 @@ class Form:
         if not self.dest.strip():
             return None
         try:
-            return statefile.load(Path(self.dest.strip()), 'dkb-install.json' if self.game == 'bananza' else statefile.NAME)
+            return statefile.load(Path(self.dest.strip()), STATE_FILES.get(self.game, statefile.NAME))
         except statefile.StateError:
             return None
 
@@ -145,7 +155,7 @@ class Form:
         update = self.update_mode()
         if not self.dest.strip():
             found.append('ui.need_dest')
-        if self.game == 'bananza':
+        if self.game in NUP_GAMES:
             nup = self.nup.strip()
             if nup:   # a .nup replaces both folders
                 if not Path(nup).is_file():
@@ -181,8 +191,8 @@ class Form:
         cmd = [str(python), '-m', 'installer']
         fields = (('--base', self.base), ('--update', self.update), ('--keys', self.keys),
                   ('--lang', self.lang), ('--dest', self.dest))
-        if self.game == 'bananza':
-            cmd += ['--game', 'bananza']
+        if self.game in NUP_GAMES:
+            cmd += ['--game', self.game]
             fields = (('--nup', self.nup), ('--exefs', self.exefs), ('--romfs', self.romfs), ('--package', self.package),
                       ('--lang', self.lang), ('--dest', self.dest))
         for flag, value in fields:
@@ -194,7 +204,7 @@ class Form:
             cmd += ['--temp', str(temp)]
         if verify:
             cmd.append('--verify')
-        if self.game == 'bananza':
+        if self.game in NUP_GAMES:
             for flag, value in (tools or {}).items():
                 if value is not None:
                     cmd += ['--' + flag.replace('_', '-'), str(value)]

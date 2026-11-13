@@ -1,4 +1,4 @@
-# Splatoon Raiders Recomp — plan
+# SPR Recomp (Splatoon Raiders) — plan
 
 This repository is a fork of [DKB Recomp](https://github.com/Lucas-blip-png/dkb-pc-recomp), retargeted from *Donkey
 Kong Bananza* to *Splatoon Raiders* (Nintendo Switch 2). DKB Recomp is itself built on
@@ -87,7 +87,7 @@ Each one cost a session; they are listed so the next one does not repeat the sea
 - **Cube maps are made as 2D arrays.** The sky and probe cube maps are created as 2D-array textures of 6 layers and sampled through cube descriptors. `vk_texture.c` gives such images `CUBE_COMPATIBLE` for this game only (the same flag on every square array broke AMD drivers in other titles), and `vk_exec_draw.c` `get_view` accepts a cube view of them. Without it the cube conversion pass read a black stand-in and the whole ambient lighting was missing.
 - **Bananza's light-quad skip does not apply** (`light_quad_fault_skip`): those quads are this game's lighting.
 - **Frame dumps.** `TOTK_DUMP=key` and F9 dump a frame; `TOTK_DUMP_PAIR=1` the next one too; `TOTK_DUMP_MIN_DRAWS=N` copies images only of passes with N draws or more (a full frame has 350 passes and the PNGs take minutes otherwise); `TOTK_DUMP_UBO=1` prints 32 uniform vectors per stage; `TOTK_DUMP_BUF=cs5` follows the buffer bound as compute SSBO slot 5. `TOTK_DUMP=probe` starts a dump by itself when the 78-layer reflection arrays are baked. The `hang:` lines the host writes after 10 s without a present name every guest thread, with its native stack.
-- **The 880x880 passes.** FS `3f6af34afb0c405a` (VS `245a619125222d33`) is drawn about 285 times per frame into 880x880 targets in the character creator; `vk_exec_draw.c` `raiders_skip_880` skips it only at that size (`TOTK_RAIDERS_SKIP_880=0` draws it). In gameplay the same pair runs 90-170 times per frame at other sizes (1.5-5 ms of GPU) and is kept: it may be lighting.
+- **The 880x880 passes are the hub's ink.** FS `3f6af34afb0c405a` (VS `245a619125222d33`) is drawn about 285 times per frame into 880x880 targets in the character creator and the hub; in the levels the same pair draws into targets of other sizes, 90-170 times per frame. `vk_exec_draw.c` `raiders_skip_880` used to skip it at 880x880, when it held the character creator at 18-19 fps, and the hub's ground then took no ink. After the later fixes drawing it costs no measurable frame rate, so it is drawn by default; `TOTK_RAIDERS_SKIP_880=1` skips it again.
 - **GPU profile.** `DKB_GPU_PROFILE=1` (`vk_gpuprof.c`) writes a timestamp after every draw, dispatch and op and logs every 10 s the shader pairs and ops that cost the most GPU time per frame. On NVIDIA a timestamp does not wait for the draws before it, so mode 1 charges a frame of rendering to the first full barrier (it showed up as "mirror write-back"). `DKB_GPU_PROFILE=2` ends the pass and drains the GPU before every timestamp: slow, but each entry is then the real cost. Do not leave mode 2 set in a PowerShell window used for normal play. `perf.c` adds "GPU busy" per frame to the frame-time report and `vk_sync.c` a 10 s submission-latency report.
 - **Write-back by difference (the gameplay frame rate).** In gameplay one compute shader (`996db3ac4cf84b14`, one thread) writes a few 112-byte records through a storage pointer of unknown size, so the binding reaches the end of its pool: 53 MiB of the VRAM mirror went back to guest memory every frame, 10-18 ms of GPU time over the PCIe 3.0 bus of the test machine (Ryzen 5 4500, RTX 3050). `vk_memory.c` "write-back by difference" snapshots a written span of 8 MiB or more bound by a dispatch; at the end of the submission `shaders/mirror_diff.comp` stores only the 16-byte blocks that changed. Smaller spans are usually rewritten whole and the copy engine moves them faster (a 256 KiB threshold cost the dialogue scene 20 fps). The first version crashed the GPU (a write at address 0) on entering gameplay; the current one skips pools whose buffers are gone and no longer crashes. `DKB_MIRROR_DIFF=0` turns it off. `vk_memory.c` `wb_tally` still logs the sources of any submission that writes back 8 MiB or more.
 - **Ruled out for the flicker:** stale VRAM mirrors (`TOTK_MEMORY=verify` found 0 mismatches, `TOTK_MEMORY=import` still flickers), completion-thread latency (side effects under 0.05 ms per wake), and the formerly untranslated material shaders (all translate now, no visual change).
@@ -115,7 +115,7 @@ the generated C passes `clang -fsyntax-only -std=gnu11` with `runtime/` on the i
 ## Next steps
 
 1. ~~**Build skeleton for this game.**~~ Done: `tools/build_game.py --version raiders` compiles the runtime against
-   `generated/raiders` and links `splatoon-raiders.exe`, without DKB's patch sets. A target with no
+   `generated/raiders` and links `spr-recomp.exe`, without DKB's patch sets. A target with no
    `tools/data/expected-<target>.json` records the SHA-256 of its own ExeFS (`--exefs`), so nothing derived from the
    dump enters the repository.
 2. ~~**Import survey.**~~ Done (see "Host surface"): no import needs a host implementation; the 14 outside
@@ -126,7 +126,7 @@ the generated C passes `clang -fsyntax-only -std=gnu11` with `runtime/` on the i
    opens files in place; no packed image or second multi-gigabyte copy is needed.
 5. **NVN 2 survey.** Log every `nvnBootstrapLoader` table entry this game touches and every new command-buffer mode
    before recording anything, as DKB did for its 51 new NVN 2 calls.
-6. ~~**Shaders.**~~ Done: every seed stage lowers (see P4). Rerun `splatoon-raiders.exe --prepare-shaders` after lowering changes.
+6. ~~**Shaders.**~~ Done: every seed stage lowers (see P4). Rerun `spr-recomp.exe --prepare-shaders` after lowering changes.
 7. **Gameplay frame rate.** About 59-60 fps in the first zone at vsync (1% low about 42). What is left: frames of 35-50 ms
    every few seconds whose time is mostly outside the replay (`TOTK_PROFILE_SLOW=<ms>` dumps every thread's chains of
    such a frame), and the main submission's replay (8-10 ms on the game's render thread).

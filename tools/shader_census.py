@@ -6,7 +6,8 @@ shared shader list, no spirv-cross, no bind-state variants; the module scan read
 a control section must start with CONTROL_MAGIC (sharcb_shaders says why).
 
 Reads build/extracted/<version>/ by default. `--romfs` and `--exefs` select other inputs; `--romfs-base` combines a loose
-base RomFS with a loose update overlay. Writes under build/<version>/shaders/ only:
+base RomFS with a loose update overlay. Writes under build/<version>/shaders/ only (`--out` and `--seed` move it:
+the installer writes into its own work folder and the install folder):
     code/<key>.code     translator input (graphics: SPH + instructions, compute: instructions)
     jobs.json           key -> job, source path, origin (bnsh|sharcb|main)
     seed-nvn2.bin       DKBN2SD1 pack for embedded Raiders FSHA/BNSH stages
@@ -438,17 +439,21 @@ def main():
     ap.add_argument('--exefs', type=Path, help='ExeFS directory (defaults to build/extracted/<version>/exefs)')
     ap.add_argument('--all', action='store_true', help='also the layout and effect shaders MNG leaves to bind-state variants')
     ap.add_argument('--translate', action='store_true', help='translate every shader and run spirv-val')
+    ap.add_argument('--out', type=Path, help='work folder for code/, jobs.json and the pack (default build/<version>/shaders)')
+    ap.add_argument('--seed', type=Path, help='where the runtime reads seed-nvn2.bin (default build/<version>/seed-nvn2.bin); '
+                                              'the installer passes the install folder')
     args = ap.parse_args()
     t0 = time.monotonic()
     extracted = ROOT / 'build' / 'extracted' / args.version
-    out = ROOT / 'build' / args.version / 'shaders'
+    out = args.out or ROOT / 'build' / args.version / 'shaders'
     out.mkdir(parents=True, exist_ok=True)
     shaders, rejected, nvn2_stages = inventory(args.romfs or extracted / 'romfs', args.exefs or extracted / 'exefs',
                                                everything=args.all, base_romfs=args.romfs_base)
     seed = out / 'seed-nvn2.bin'
     write_nvn2_seed(nvn2_stages, seed)
-    runtime_dir = ROOT / 'build' / args.version
-    shutil.copyfile(seed, runtime_dir / 'seed-nvn2.bin')
+    runtime_seed = args.seed or ROOT / 'build' / args.version / 'seed-nvn2.bin'
+    runtime_seed.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(seed, runtime_seed)
     jobs = write_shaders(shaders, out, args.all)
     a, b, c = (sum(1 for j in jobs.values() if j['origin'] == o) for o in ('bnsh', 'sharcb', 'main'))
     print(f'{len(shaders)} unique shaders found in all, {len(jobs)} selected; {rejected} .sharcb record candidates '

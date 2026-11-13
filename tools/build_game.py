@@ -83,7 +83,7 @@ UCRT = Path(r'C:\msys64\ucrt64\bin')
 EXE = 'dkb.exe' if WIN else 'dkb'   # DKB Recomp: not TotK's executable
 # A version name that is a game of its own in this checkout gets its own executable (--exe overrides either). Splatoon
 # Raiders was lifted into generated/raiders and shares nothing with the DKB builds but the runtime.
-GAME_EXE = {'raiders': 'splatoon-raiders'}
+GAME_EXE = {'raiders': 'spr-recomp'}   # a name of the project's own: the game's trademark stays out of it
 
 
 def on_path(name):

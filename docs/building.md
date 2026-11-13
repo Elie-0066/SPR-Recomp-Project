@@ -139,7 +139,7 @@ executable so it refuses to start with a different dump:
 ```
 
 The generated C is about 1.1 GB across `main`, `sdk`, and `subsdk0`. The current executable is
-`build\raiders\splatoon-raiders.exe`; the shaders are prepared separately with the shader commands above. Current status: the
+`build\raiders\spr-recomp.exe`; the shaders are prepared separately with the shader commands above. Current status: the
 executable reaches game startup and mounts RomFS, but it still hits an access violation before the first rendered
 frame. A successful compile does not yet mean the game is playable.
 

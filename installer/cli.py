@@ -1,5 +1,6 @@
-"""Command line: python -m installer --nup FILE --dest DIR [--package DIR] (Bananza 1.0.0 or 3.2.0)
-              or python -m installer --exefs DIR --romfs DIR --dest DIR [--package DIR]
+"""Command line: python -m installer --game raiders --nup FILE --dest DIR [--package DIR] (SPR Recomp, update 65536)
+              or python -m installer --game raiders --exefs DIR --romfs DIR --dest DIR [--package DIR]
+              or the same with --game bananza (Bananza 1.0.0 or 3.2.0)
 
 Legacy TotK: --base FILE --update FILE --keys FILE --lang CODE --dest DIR [--root DIR]
                                      [--temp DIR] [--verify]
@@ -57,7 +58,9 @@ def main(argv=None):
     ap.add_argument('--temp', type=Path, help='temp folder (default: temp/ of the release on Windows, .setup-temp in '
                                               'the install folder on Linux, build/install-temp in a repository)')
     ap.add_argument('--verify', action='store_true', help='hash every kept file, also those this release made')
-    ap.add_argument('--game', choices=('bananza', 'totk'), help='game profile (.nup and folder inputs select Bananza)')
+    ap.add_argument('--game', choices=('raiders', 'bananza', 'totk'),
+                    help='game profile: raiders (SPR Recomp), bananza, totk (.nup and folder inputs without it select '
+                         'Bananza, or Raiders for an install folder holding spr-install.json)')
     ap.add_argument('--nup', type=Path, help='Bananza .nup container (base 1.0.0, with or without update 3.2.0)')
     ap.add_argument('--nup-package', choices=('latest', 'base'),
                     help='what to install from the .nup: latest (default: the newest update, as Eglantine runs it) '
@@ -82,10 +85,13 @@ def main(argv=None):
         if found:
             Reporter().warning('warn.update_available', tag=found[0], url=found[1])
 
+    if args.game == 'raiders' or (args.game is None and (args.dest / 'spr-install.json').is_file()):
+        from .raiders import main as raiders_main
+        return raiders_main(args)
     if (args.game == 'bananza' or args.nup or args.nup_package or args.exefs or args.romfs or
             (args.game is None and (args.dest / 'dkb-install.json').is_file())):
         if args.game == 'totk':
-            ap.error('--nup/--exefs/--romfs require --game bananza')
+            ap.error('--nup/--exefs/--romfs require --game raiders or --game bananza')
         from .bananza import main as bananza_main
         return bananza_main(args)
 

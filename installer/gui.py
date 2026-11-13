@@ -26,7 +26,7 @@ except ImportError:
 from . import ini
 from . import layout as layouts
 from . import update
-from .guilogic import (DKB_STEP_ORDER, DONE, FAILED, PENDING, RUNNING, SKIPPED, UI_LANGUAGES, Catalog, Form, Model, Process,
+from .guilogic import (DKB_STEP_ORDER, NUP_GAMES, DONE, FAILED, PENDING, RUNNING, SKIPPED, UI_LANGUAGES, Catalog, Form, Model, Process,
                        amount, default_game_language, describe_event, parse_line, windows_ui_language)
 
 POLL_MS = 100
@@ -138,7 +138,7 @@ class App:
         self.root, self.layout = root, layout
         self.game = game
         self.cat = Catalog(ui_lang, game)
-        self.model = Model(DKB_STEP_ORDER if game == 'bananza' else None)
+        self.model = Model(DKB_STEP_ORDER if game in NUP_GAMES else None)
         self.process = None
         self.closing = False
         self.run_args = run_args or {}   # extra CLI options for tests: temp, verify
@@ -302,7 +302,7 @@ class App:
         grid.columnconfigure(1, weight=1)
         rows = (('base', 'ui.base', 'ui.pick_game'), ('update', 'ui.update', 'ui.pick_update'),
                 ('keys', 'ui.keys', 'ui.pick_keys'))
-        if self.game == 'bananza':
+        if self.game in NUP_GAMES:
             rows = (('nup', 'dkb.ui.nup', 'dkb.ui.pick_nup'), ('exefs', 'dkb.ui.exefs', 'dkb.ui.pick_exefs'),
                     ('romfs', 'dkb.ui.romfs', 'dkb.ui.pick_romfs'), ('package', 'dkb.ui.package', 'dkb.ui.pick_package'))
         self.form_rows = {}
@@ -327,7 +327,7 @@ class App:
         self.update_hint.pack(anchor='w', pady=(8, 0))
         self.form_error = ttk.Label(f, style='Err.TLabel', wraplength=620, justify='left')
         self.form_error.pack(anchor='w', pady=(8, 0))
-        if self.game != 'bananza':
+        if self.game not in NUP_GAMES:
             self.label(f, 'ui.keys_private', wraplength=620, justify='left').pack(anchor='w', pady=(8, 0))
         return f
 
@@ -402,13 +402,13 @@ class App:
         self.fit()
 
     def pick_file(self, name, pick_id):
-        if self.game == 'bananza' and name == 'nup':
+        if self.game in NUP_GAMES and name == 'nup':
             types = [(self.cat('dkb.ui.type_nup'), '*.nup'), (self.cat('ui.type_all'), '*.*')]
             path = filedialog.askopenfilename(title=self.cat(pick_id), filetypes=types)
             if path:
                 self.vars[name].set(os.path.normpath(path))
             return
-        if self.game == 'bananza':
+        if self.game in NUP_GAMES:
             path = filedialog.askdirectory(title=self.cat(pick_id), mustexist=True)
             if path:
                 self.vars[name].set(os.path.normpath(path))
@@ -443,7 +443,7 @@ class App:
         self.begin(command, self.layout.root)
 
     def begin(self, command, cwd):
-        self.model = Model(DKB_STEP_ORDER if self.game == 'bananza' else None)
+        self.model = Model(DKB_STEP_ORDER if self.game in NUP_GAMES else None)
         self.model.dest = self.vars['dest'].get().strip()
         self.clear_log()
         self.build_step_rows(self.model.steps)
@@ -674,7 +674,7 @@ def selftest(layout, shots=None, game='totk'):
     root.geometry('+60+40')
     app = App(root, 'en', layout, game=game)
     steps, mixed = [], []
-    destination = 'Z:/selftest/Bananza' if game == 'bananza' else 'Z:/selftest/TotK'
+    destination = {'bananza': 'Z:/selftest/Bananza', 'raiders': 'Z:/selftest/SPR'}.get(game, 'Z:/selftest/TotK')
 
     def shot(name):
         root.update()
@@ -691,7 +691,7 @@ def selftest(layout, shots=None, game='totk'):
             app.vars['base'].set('Z:/selftest/totk.xci')
             app.vars['update'].set('Z:/selftest/totk-1.2.1.nsp')
             app.vars['keys'].set('Z:/selftest/prod.keys')
-            if game == 'bananza':
+            if game in NUP_GAMES:
                 app.vars['exefs'].set('Z:/selftest/Bananza/exefs')
                 app.vars['romfs'].set('Z:/selftest/Bananza/romfs')
             app.show('form')
@@ -748,7 +748,7 @@ def selftest(layout, shots=None, game='totk'):
 
 def samples(events, game):
     """Keep the same screen fixtures for both profiles, with each profile's actual step names."""
-    if game != 'bananza':
+    if game not in NUP_GAMES:
         return events
     mapping = {'extract': 'dkb_data', 'prepare': 'dkb_verify'}
     result = []
@@ -784,7 +784,7 @@ def main(argv=None):
     ap.add_argument('--shots', type=Path)
     ap.add_argument('--lang', choices=UI_LANGUAGES)
     ap.add_argument('--root', type=Path)
-    ap.add_argument('--game', choices=('bananza', 'totk'), default='bananza')
+    ap.add_argument('--game', choices=('raiders', 'bananza', 'totk'), default='raiders')
     for name in ('package', 'toolchain', 'deps', 'ninja', 'dll-dir', 'translator', 'dotnet'):
         ap.add_argument('--' + name, type=Path)
     ap.add_argument('--jobs', type=int, default=6)
