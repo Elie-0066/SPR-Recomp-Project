@@ -590,6 +590,8 @@ void vk_exec_pass_begin(VkExec *ex) {
         if (has_image(want, nwant, t->image)) continue;
         want[nwant] = t->image, wasp[nwant++] = i < 8 ? VK_IMAGE_ASPECT_COLOR_BIT : t->img->aspect;
     }
+    for (uint32_t i = 0; vk_dump_armed && i < ex->pass_ncolor; i++)
+        if (ex->color[i].image && ex->color[i].blocks) vk_dump_request_bc();
     barrier_to(ex, want, wasp, nwant);   // passes, clears, copies and dispatches see each other's results
     ex->fbl_mask = fbl;
     ex->fb_dirty = 0;

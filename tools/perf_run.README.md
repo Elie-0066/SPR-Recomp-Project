@@ -1,5 +1,9 @@
 # perf_run: controlled dkb.exe runs with an evidence bundle
 
+> [!NOTE]
+> Inherited from DKB Recomp: the script drives `build\dkb100\dkb.exe` (Bananza) by default. For *Splatoon Raiders*
+> pass `-Exe build\raiders\spr-recomp.exe`; its walking scripts were written for Bananza and have not been adapted.
+
 Scripts: `tools/perf_run.ps1` (launch, sample, bundle) and `tools/perf_evidence.py` (statistics and verdicts).
 Output: `build/agent-perf/<yyyyMMdd-HHmmss>-<first|repeat>/`. Nothing here changes game code.
 

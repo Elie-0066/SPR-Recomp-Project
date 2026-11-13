@@ -1,5 +1,9 @@
 # DLSS (experimental)
 
+> [!NOTE]
+> Inherited from DKB Recomp and written for Bananza. Not tried with *Splatoon Raiders*, whose own upscaler is replaced
+> by FSR 1 EASU ([raiders-plan.md](raiders-plan.md)).
+
 `upscaler = dlss` in `totk.ini` (or `DKB_UPSCALER=dlss`) replaces the game's own upscaler, the compute dispatch that
 scales the rendered frame to the output resolution, with NVIDIA DLSS Super Resolution (`runtime/vk_dlss.c`). FSR still
 scales the output to the window when the window is larger. The setting is read at start.

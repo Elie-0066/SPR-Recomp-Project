@@ -1,10 +1,14 @@
 # Architecture
 
-How the Switch build of *Tears of the Kingdom* becomes a native Windows x86-64 program. The upstream projects it builds on are listed under Credits in the [README](../README.md).
+How a Switch build becomes a native Windows x86-64 program in SPR Recomp, whose target is *Splatoon Raiders* (Switch 2).
+The pipeline was built for *Tears of the Kingdom* in TotK Recomp and extended to NVN 2 and Switch 2 games in DKB Recomp
+(*Donkey Kong Bananza*); this fork keeps it and adds what Raiders needs. Examples below that name TotK or Bananza come
+from those projects and describe the same code. The upstream projects are listed under "Origins and licenses" in the
+[README](../README.md); the Raiders state is in [raiders-plan.md](raiders-plan.md).
 
 ## Starting points
 
-Two MIT projects cover different halves of the problem:
+TotK Recomp started from two MIT projects that cover different halves of the problem:
 
 | | LAS Recomp | MacNativeGames |
 |---|---|---|
@@ -20,18 +24,21 @@ MacNativeGames cannot run on x86-64 as is: its CPU path executes ARM64 code nati
 
 ### 1. Input
 
-- Base 1.0.0 (`0100F2C0115B6000`) and one cumulative update (`0100F2C0115B6800`), NSP or XCI, plus the keys of the user's console.
-- ExeFS and RomFS extraction: MacNativeGames' Python extractor (Python 3.14 for `compression.zstd`, `.venv-py314`).
-- Update merging: hactool at `1d64a83` with MacNativeGames' BKTR patches, built by `tools/build_hactool.py`.
-- Verification: MacNativeGames' `expected-v*.json` hashes of ExeFS, RomFS and fonts.
-- Primary version: 1.4.3, the last update; performance work targets it. It replaced all three modules of the earlier updates (new SDK 20.5.22, RELR relocations, audio renderer REV15) and builds with `--version v143`, `recomp/patches-v143.txt`. 1.2.1 is a second target on the same build path; 1.0.0, 1.1.2 and 1.2.1 share `sdk`, `subsdk0` and `rtld` byte for byte, so only `main` differs among them. Saves load on either.
-- Windows driver: `tools/extract.py` runs the vendored extractors (`tools/vendor/macnativegames/`) and identifies the update by the SHA-256 of its `main`. hactool has no Darwin `funopen` here, so the base Program NCA is copied out of the NSP before the BKTR merge (about 17 GB of temporary space).
+- *Splatoon Raiders* update 65536 (title `0400380020056000`), from the user's own dump: the update's ExeFS and the merged
+  RomFS as extracted folders, or a `.nup` file (`tools/extract_nup.py`). No keys are needed.
+- Verification: the SHA-256 of the five ExeFS files in `tools/data/expected-raiders.json`; the installer and the built
+  executable refuse any other ExeFS.
+- The RomFS stays a loose folder: `tools/romfs_index.py` indexes it in place (46,350 files) instead of packing a second
+  multi-gigabyte image.
+- Inherited inputs: TotK Recomp reads TotK 1.0.0 to 1.4.3 from NSP or XCI with the console's keys, through
+  MacNativeGames' extractor and a patched hactool (`tools/extract.py`, `tools/build_hactool.py`), and DKB Recomp reads
+  Bananza 1.0.0 and 3.2.0. Those paths are still in the tools but are not maintained here.
 
 ### 2. CPU: lift ARM64 to C
 
 - Modules: `main`, `sdk`, `subsdk0`. `rtld` is dropped and linking is done by the host, as MacNativeGames does.
 - Base: LAS Recomp's hand-written decoder (`lifter.py`) and NEON/FP lowering (`simd_c.py`, `simd.h`), MIT. Output: one C function per guest function, direct calls for `BL`, an address-keyed table for indirect branches.
-- Rewritten for TotK scale:
+- Rewritten for TotK scale (Raiders lifts 259,913 functions across the three modules):
   - generator runs in parallel processes, with bounded memory per worker;
   - jump tables resolved by our own symbolic pass instead of Unicorn, which keeps GPL code out of the shipped generator;
   - `LDXP`/`STXP` (128-bit exclusive pairs) supported;
@@ -88,6 +95,10 @@ Every guest thread is a host thread. TotK assumes Horizon's scheduler: three app
   binds from CPU-written pools is copied, and the draws bind the copy (`vk_usnap.c`, after MacNativeGames'
   `TOTK_UBO_SNAPSHOT`); without it, late draws read another object's matrix.
 - Driver data. The NVN driver keeps a per-stage constant bank (c0) that shaders read for things like point size, dispatch size and base instance. The back end fills it the way the driver does.
+- NVN 2 (Switch 2). Raiders, like Bananza, calls NVN 2 and ships Ampere shaders: `nvn_api_nvn2.c` answers the NVN 2
+  procs, and Eglantine's GPL lowering (`runtime/third_party/eglantine/`) turns each Ampere stage into the Maxwell form the
+  translator below takes. Raiders' own additions (the FSR 1 stand-in for its neural upscaler, the hub's ink map, the
+  body mask's block-compressed inputs) are described in [raiders-plan.md](raiders-plan.md).
 - Shaders: the Ryujinx translator 1.3.2 with MacNativeGames' patches and ours (`tools/xlate/patches/`), built with .NET 10 NativeAOT as `totk_xlate.exe` and run as a separate process. Its SPIR-V goes to Vulkan directly. `tools/prepare_shaders.py` and `totk.exe --prepare-shaders` translate and compile the variants of MacNativeGames' shared list ahead of play (29,587 for 1.4.3); the rest are translated on first use and cached on disk.
 - Pipelines: `VK_EXT_graphics_pipeline_library` where the driver has it. Shader stages are compiled ahead into libraries; a draw that meets a new state links them at once (fast link), and an optimised pipeline replaces the linked one when a background thread finishes it. Pipeline keys seen in play are saved and built at boot. A draw whose pipeline is not ready is skipped when one of its pass's targets was rendered in the previous frame, and waits otherwise, so one-shot passes are never lost; a full-screen draw is skipped as well rather than waiting (`TOTK_PIPE_SKIP`); the stage libraries a waiting draw needs are built on idle workers in parallel (`TOTK_PIPE_WAIT`). Without the extension, a missing pipeline is built on a worker and the draw waits or is skipped by the same rule.
 - Resolution. Patch sets make the game read its output, swapchain and scene sizes from the patch page

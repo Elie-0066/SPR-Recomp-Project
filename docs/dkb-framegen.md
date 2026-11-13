@@ -1,5 +1,8 @@
 # Frame generation (experimental)
 
+> [!NOTE]
+> Inherited from DKB Recomp and measured on Bananza; not tried with *Splatoon Raiders*.
+
 Off by default. Code: `runtime/vk_framegen.c`, pacing arithmetic in `runtime/fg_pace.h`, shaders in `runtime/shaders/fg_*.comp`.
 
 ## What it does

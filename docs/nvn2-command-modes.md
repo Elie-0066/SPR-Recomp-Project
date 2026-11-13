@@ -1,5 +1,8 @@
 # NVN 2 compute overlap
 
+> [!NOTE]
+> Written for Bananza in DKB Recomp; the NVN 2 call it describes is shared with *Splatoon Raiders*.
+
 `runtime/nvn_api_nvn2.c`, `nvnCommandBufferSetComputeOverlapMode` preserves the replay's existing serialized
 execution. This call controls hardware compute/graphics scheduling; it does not change shader bindings, resource
 contents, or which dispatches execute. Allowing concurrent execution does not require a host to overlap the work.

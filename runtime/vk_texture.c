@@ -233,7 +233,17 @@ static int tex_mirrored(const tex_t *t) {
     if (!t->mem || nvn_gpu_only((uintptr_t)t->mem)) return 0;
     if (t->has_layout) return 1;
     const pool_t *p = t->pool;
-    if (!p || !(p->flags & (NVN_MEMORY_POOL_FLAGS_CPU_UNCACHED | NVN_MEMORY_POOL_FLAGS_CPU_CACHED))) return 0;
+    if (!p) return 0;
+    // A CPU_NO_ACCESS pool starts with the content of the storage the game gave it, and the game ships block-compressed
+    // textures there: Splatoon Raiders keeps the masks of the skin its outfits cover in such a pool (flags 0x21) and
+    // combines them into the player body's opacity mask at the outfit's load. Left GPU-owned, they were never
+    // uploaded, the combined mask came out zero and the body's alpha test discarded all of it. A block-compressed
+    // texture is drawn into only through a view of its blocks, so mirroring it adds no write-back to render targets.
+    int bw = 1, bh = 1;
+    if ((p->flags & NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS) && !(p->flags & NVN_MEMORY_POOL_FLAGS_COMPRESSIBLE) &&
+        nvn_fmt_bpb(t->d.format, &bw, &bh) && (bw > 1 || bh > 1))
+        return !(t->d.flags & (NVN_TEXTURE_FLAGS_DISPLAY | NVN_TEXTURE_FLAGS_COMPRESSIBLE)) && t->d.samples <= 1;
+    if (!(p->flags & (NVN_MEMORY_POOL_FLAGS_CPU_UNCACHED | NVN_MEMORY_POOL_FLAGS_CPU_CACHED))) return 0;
     if (t->d.flags & (NVN_TEXTURE_FLAGS_DISPLAY | NVN_TEXTURE_FLAGS_COMPRESSIBLE | NVN_TEXTURE_FLAGS_ADAPTIVE_ZCULL |
                       NVN_TEXTURE_FLAGS_DEPTH16_PREFER_FAST_CLEAR | NVN_TEXTURE_FLAGS_ZCULL_SUPPORT_STENCIL))
         return 0;

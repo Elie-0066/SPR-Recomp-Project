@@ -1,9 +1,10 @@
 # Controls
 
 > [!NOTE]
-> This page comes from TotK Recomp. DKB Recomp uses the same input code, so it applies to Bananza too; setting and file
-> names are written below with the TotK Recomp names. In the Bananza build read `TOTK_*` as `DKB_*` (both work, `DKB_`
-> wins) and `totk.ini` as `dkb.ini` (a `totk.ini` is copied to it on the first run).
+> This page comes from TotK Recomp; SPR Recomp keeps the same input code, so it applies to *Splatoon Raiders*. Setting
+> and file names are written below with the TotK Recomp names: read `TOTK_*` as `DKB_*` if you prefer (both work, `DKB_`
+> wins), `totk.ini` as `dkb.ini` and `totk.exe` as `spr-recomp.exe`. The "Action" column and the game-specific
+> examples (mouse camera, scripted input) describe TotK or Bananza; in Raiders the buttons do what the game assigns.
 
 Input comes from the first SDL3 gamepad, the keyboard and the mouse, merged into one Switch controller (`runtime/input_win.c`). Buttons are ORed; each stick takes the source with the larger deflection. Keys and mouse buttons count only while the game window is in the foreground. `TOTK_INPUT=none` disables both (automated runs). `TOTK_*` settings can also be set in `totk.ini` next to `totk.exe` (`input = none`, `motion = 0`, `rumble = 0`); the environment overrides the file. `TOTK_RUMBLE_STRENGTH` is the rumble strength in percent (0 to 300, default 130; 0 is the same as `rumble = 0`). `TOTK_RUMBLE_CURVE` is the exponent applied to the amplitude before the strength (0.2 to 1.5, default 0.6; lower makes weak pulses stronger, 1 is linear). `TOTK_RUMBLE_TRIGGERS=1` also drives the impulse triggers of an Xbox pad.
 
@@ -16,7 +17,7 @@ Input comes from the first SDL3 gamepad, the keyboard and the mouse, merged into
 
 The log names the layout in effect (`input: gamepad layout ...`); the menu shows it under *Automatic*. With `nintendo`, `xbox` and `auto` the game's button prompts stay Switch letters; `xbox_prompts` changes them.
 
-| Switch | Gamepad (by position, Nintendo layout) | Keyboard and mouse | Action in the world |
+| Switch | Gamepad (by position, Nintendo layout) | Keyboard and mouse | Action in TotK |
 |---|---|---|---|
 | Left stick | left stick | W A S D | move |
 | Right stick | right stick | mouse; arrow keys as a second source | camera |

@@ -1,5 +1,9 @@
 # Bananza shaders (base 1.0.0)
 
+> [!NOTE]
+> DKB Recomp's notes on Bananza's shaders, kept as reference: the NVN 2 shader format and the Ampere lowering are shared
+> with *Splatoon Raiders*, whose shader state is in [raiders-plan.md](raiders-plan.md) (P4).
+
 Notes on the NVN 2 shader format and on how DKB Recomp turns the game's Ampere shaders into SPIR-V. The plan is in
 [bananza-plan.md](bananza-plan.md); open shader work is in the issues labelled
 [area: shaders](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues?q=is%3Aopen+label%3A%22area%3A+shaders%22).

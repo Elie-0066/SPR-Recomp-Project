@@ -1,7 +1,8 @@
 # Building from source
 
-Windows 10 or later, an x86-64 CPU with AVX2, and a GPU with Vulkan 1.3 and `VK_EXT_external_memory_host`. Allow about
-60 GB for the work folder. Extraction wants about 55 GB free while it runs and keeps about 35 GB afterwards.
+How to build SPR Recomp, the recompilation of *Splatoon Raiders*, from your own dump. Windows 10 or later, an x86-64
+CPU with AVX2, and a GPU with Vulkan 1.3 and `VK_EXT_external_memory_host`. Besides the dump, allow about 6 GB for the
+build (1.3 GB of generated C, 0.4 GB of objects, the 300 MB executable and the shader and pipeline caches).
 
 Players who only want to play can use the [installer](installer.md) instead: it builds the game on their machine
 without this toolchain.
@@ -37,6 +38,8 @@ PATH:
 
 ### hactool
 
+Only the inherited TotK target needs it: Raiders reads an already extracted dump.
+
 `tools/build_hactool.py` fetches SciresM/hactool at `1d64a83` into `toolchain\src\hactool`, applies the three patches in
 `tools/hactool/` and builds a static `toolchain\hactool\hactool.exe` with MSYS2 UCRT64 gcc (a few seconds):
 
@@ -49,14 +52,13 @@ PATH:
 
 hactool reads `-k <prod.keys>`; MSYS2 shells set `HOME`, which hides its default key location, so pass `-k` there.
 
-## Build
+## Build (Splatoon Raiders)
 
-From the repository root, in PowerShell. Every step that depends on the game version takes it as `<ver>`: `v143` for
-1.4.3, `v121` for 1.2.1 or `v111` for 1.1.1. The tools default to `v121` when `--version` is left out. Saves load on any
-of them.
+This is the active target: update `65536` of *Splatoon Raiders* (title `0400380020056000`), read from your own
+extracted dump. From the repository root, in PowerShell:
 
-1. Python environments (once). `.venv` runs the lifter and the build; `.venv-py314` runs the extraction scripts, which
-   need the stdlib `compression.zstd` of Python 3.14:
+1. Python environments (once). `.venv` runs the lifter and the build; `.venv-py314` runs the extraction and shader
+   scripts, which need the stdlib `compression.zstd` of Python 3.14:
 
    ```powershell
    uv venv --python 3.12 .venv
@@ -65,23 +67,75 @@ of them.
    uv pip install --python .venv-py314/Scripts/python.exe -r tools/requirements-py314.txt
    ```
 
-2. Copy `config.example.toml` to `config.local.toml` and set the paths to your base game, the update and your console's
-   keys file. `config.local.toml` is ignored by git. The tools read the keys file themselves.
+2. Copy `config.example.toml` to `config.local.toml` and set the paths of your dump there. `config.local.toml` is
+   ignored by git. Raiders reads the extracted update ExeFS and RomFS folders in place: no keys, no repacking.
 
-3. Extract and verify. This writes `build\extracted\v0` (1.0.0) and `build\extracted\<ver>` for each update in
+3. Shader translator (once; no game files). This publishes `build\xlate\totk_xlate.exe`:
+
+   ```powershell
+   .venv\Scripts\python tools\build_xlate.py
+   ```
+
+4. Lift the three ExeFS modules (`main`, `sdk`, `subsdk0`) to C, then compile and link `build\raiders\spr-recomp.exe`.
+   The build writes the ExeFS hash beside the executable, so it refuses to start with a different dump:
+
+   ```powershell
+   .venv\Scripts\python recomp\gen.py --exefs "<dump>\updates\65536\exefs" --out generated\raiders
+   .venv\Scripts\python tools\build_game.py --version raiders --exefs "<dump>\updates\65536\exefs" --romfs "<dump>\updates\65536\romfs"
+   ```
+
+   The generated C is about 1.1 GB. A later build recompiles only what changed; after a runtime change,
+   `ninja -f build\raiders\build.ninja` from the repository root relinks. A `game.ico` in `build\raiders` becomes the
+   executable's icon.
+
+5. Prepare the shaders (once per build folder and translator). The census collects every NVN 2 stage of the game's
+   files into `seed-nvn2.bin`, then the executable translates them and builds the driver's pipeline libraries:
+
+   ```powershell
+   .venv-py314\Scripts\python tools\shader_census.py --version raiders --romfs "<dump>\updates\65536\romfs" --exefs "<dump>\updates\65536\exefs" --out build\raiders\shaders --seed build\raiders\seed-nvn2.bin
+   cd build\raiders
+   .\spr-recomp.exe --translate-shaders
+   .\spr-recomp.exe --warm-shaders
+   ```
+
+   Without this step the first launch compiles shaders during play and stutters until the caches fill.
+
+6. Run, from the build folder (the runtime looks for its files there):
+
+   ```powershell
+   cd build\raiders
+   .\spr-recomp.exe --boot
+   ```
+
+Settings live in `dkb.ini` next to the executable (the in-game menu writes it); saves go to `build\profile-raiders`.
+The current state of the game is in [raiders-plan.md](raiders-plan.md).
+
+## Inherited targets (TotK and Bananza)
+
+The build path of the projects this fork comes from is still in the code: *Tears of the Kingdom* (`--version v143`,
+`v121`, `v111`, from TotK Recomp) and *Donkey Kong Bananza* (from DKB Recomp). They are not maintained here; the steps
+are kept as reference for the shared tools.
+
+Every step that depends on the TotK version takes it as `<ver>`: `v143` for 1.4.3, `v121` for 1.2.1 or `v111` for
+1.1.1. The tools default to `v121` when `--version` is left out. Saves load on any of them.
+
+1. With the Python environments above, copy `config.example.toml` to `config.local.toml` and set the paths to your
+   base game, the update and your console's keys file. `config.local.toml` is ignored by git. The tools read the keys file themselves.
+
+2. Extract and verify. This writes `build\extracted\v0` (1.0.0) and `build\extracted\<ver>` for each update in
    `updates`, identified by its hash; a hash mismatch stops the run:
 
    ```powershell
    .venv-py314\Scripts\python tools\extract.py
    ```
 
-4. Shader translator (once; no game files). This publishes `build\xlate\totk_xlate.exe`:
+3. Shader translator (once; no game files). This publishes `build\xlate\totk_xlate.exe`:
 
    ```powershell
    .venv\Scripts\python tools\build_xlate.py
    ```
 
-5. Lift the modules to C, write the RomFS overlay (the frame-rate fix), then compile and link
+4. Lift the modules to C, write the RomFS overlay (the frame-rate fix), then compile and link
    `build\<ver>\totk.exe`:
 
    ```powershell
@@ -105,7 +159,7 @@ of them.
    `build\<ver>\romfs-patches-xbox` ([controls.md](controls.md), "Xbox button prompts"); `build_game.py` copies it next
    to `totk.exe` like `romfs-patches`.
 
-6. Prepare the shaders (once per build folder and translator). It needs `refs\MacNativeGames` (`tools\fetch_refs.sh`)
+5. Prepare the shaders (once per build folder and translator). It needs `refs\MacNativeGames` (`tools\fetch_refs.sh`)
    for the shared shader list:
 
    ```powershell
@@ -116,7 +170,7 @@ of them.
    The AMD driver keeps its pipeline cache per exe path and holds a limited amount: preparing another build folder can
    evict this one's. `totk.exe --warm-shaders` rebuilds it from the shader cache.
 
-7. Run. The game keeps running when its window loses the focus (`assume_focus = 1` in `totk.ini`, the default; the
+6. Run. The game keeps running when its window loses the focus (`assume_focus = 1` in `totk.ini`, the default; the
    Game tab switches it). With 0 it pauses, as it does on the Switch when Home is pressed.
 
    ```powershell
@@ -126,24 +180,7 @@ of them.
 Settings live in `totk.ini` next to `totk.exe` ([totk.ini.example](../totk.ini.example) lists them). Saves go to
 `build\profile` for `v121` and `build\profile-<ver>` for other versions (`build_game.py --profile` changes it).
 
-### Splatoon Raiders
-
-Raiders reads the extracted Switch 2 dump in place. Set the base, update, and keys paths in the ignored
-`config.local.toml`; the current target is update `65536`. The lifter reads the update ExeFS directly, and the runtime
-reads the merged update RomFS directory without making a packed copy. The build also writes an ExeFS hash beside the
-executable so it refuses to start with a different dump:
-
-```powershell
-.venv\Scripts\python recomp\gen.py --exefs "<dump>\updates\65536\exefs" --out generated\raiders
-.venv\Scripts\python tools\build_game.py --version raiders --exefs "<dump>\updates\65536\exefs" --romfs "<dump>\updates\65536\romfs"
-```
-
-The generated C is about 1.1 GB across `main`, `sdk`, and `subsdk0`. The current executable is
-`build\raiders\spr-recomp.exe`; the shaders are prepared separately with the shader commands above. Current status: the
-executable reaches game startup and mounts RomFS, but it still hits an access violation before the first rendered
-frame. A successful compile does not yet mean the game is playable.
-
-### Portable folder
+### Portable folder (TotK)
 
 `.venv\Scripts\python tools\package_build.py --version <ver>` writes `build\<ver>-portable`, which runs on another of
 your machines without MSYS2, Python or .NET. `romfs.bin` stays out unless you pass `--with-romfs`; otherwise put it in
@@ -152,7 +189,7 @@ folder. The folder holds code and data derived from your game: for your own mach
 
 ## Linux (in progress)
 
-The runtime builds and runs on x86-64 Linux with a window, input and menu on SDL3 (`*_sdl.c`) in place of the Win32
+These ports were made for the inherited TotK target; Raiders has not been built on them. The runtime builds and runs on x86-64 Linux with a window, input and menu on SDL3 (`*_sdl.c`) in place of the Win32
 files (`*_win.c`); `runtime/platform/linux.c` implements `platform.h`. Status: the selftest and the probes pass; 1.2.1
 plays at 60 fps on RADV (RX 7800 XT) and NVIDIA (RTX 3060); 1.4.3 builds, probes and plays on RADV (RX 6600, and the
 Vega 7 of a Ryzen 5 4600G at about 34 fps). Long play sessions and the Steam Deck itself are not verified yet.
@@ -210,7 +247,7 @@ The Deck's GPU (Van Gogh) has no native ASTC, so its textures go through the com
 
 ## macOS (in progress)
 
-The runtime builds and runs on Apple Silicon with MoltenVK, so the Vulkan back end is unchanged and SPIR-V reaches
+As for Linux, this was made for the inherited TotK target; Raiders has not been built on it. The runtime builds and runs on Apple Silicon with MoltenVK, so the Vulkan back end is unchanged and SPIR-V reaches
 Metal through the portability driver. The window, input and menu are the SDL3 ones (`*_sdl.c`) and
 `runtime/platform/darwin.c` implements `platform.h`. Status: the selftest and the device probe pass, and the game boots
 to the mode select at about 60 fps on an M4 (16 GB). Play is not verified, and the terrain is missing: Metal has no
@@ -265,7 +302,7 @@ Before a commit:
 
 - `python tools/check_content.py --staged`: nothing game-derived is staged. CI runs the same check;
   `git config core.hooksPath .githooks` runs it before each local commit.
-- `build\<ver>\totk.exe --selftest`: layout, dispatch table and host-function registry, without game files.
+- `build\raiders\spr-recomp.exe --selftest`: layout, dispatch table and host-function registry, without game files.
 
 The lifter (`recomp/`) and the CPU headers (`runtime/cpu.h`, `runtime/simd.h`) are checked against Unicorn. Every lifter
 change passes these, all run with `.venv`:
@@ -285,7 +322,7 @@ change passes these, all run with `.venv`:
 | `tests\lowend_bench_test.py` | `tools\lowend_bench.py` `parse_log` on a synthetic perf log (the tool itself runs `dkb.exe` pinned to N cores and prints a before/after table) | no |
 | `tests\jumptables_check.py` | `recomp/jumptables.py` against a Unicorn oracle; must report 0 disagreements, on 1.4.3 too | yes |
 
-Runtime probes, each a mode of `totk.exe` (the list is at the top of `runtime/main.c`): `--probe-kernel`,
+Runtime probes, each a mode of the executable (`spr-recomp.exe`; `totk.exe` for the inherited targets) (the list is at the top of `runtime/main.c`): `--probe-kernel`,
 `--probe-vkexec`, `--probe-nvn-tex` and `--probe-shader` cover most runtime changes. `--probe-shader` and the draw
 part of `--probe-vkexec` translate shaders of the census below: they look for `build/<ver>/shaders/jobs.json` of the
 exe's own version first, then of the other one. On macOS a probe that opens a window needs a desktop session, because

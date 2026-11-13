@@ -1,5 +1,9 @@
 # DKB Recomp plan
 
+> [!NOTE]
+> DKB Recomp's plan for *Donkey Kong Bananza*, kept from the project SPR Recomp forks. The active target is *Splatoon
+> Raiders*: its plan is [raiders-plan.md](raiders-plan.md).
+
 Goal: *Donkey Kong Bananza* (Switch 2, base 1.0.0) playable on Windows as a static recompilation, built on
 [TotK Recomp](https://github.com/valentderah/totk-pc-recomp). No game files in the repository: each user dumps their
 own cartridge and the build runs on their machine.

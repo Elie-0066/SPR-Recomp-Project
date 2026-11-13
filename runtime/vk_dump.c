@@ -20,9 +20,13 @@
 // as x/2+1/2, UNORM and sRGB bytes written as stored. Caps: MAX_PASSES passes copied, PNG_CAP bytes of PNGs.
 // TOTK_DUMP_TEX=<id>|<w>x<h>[,...]: those texture slots, or 2D textures of that size, are copied where first sampled,
 // whatever their format.
-// TOTK_DUMP_UBO=1: each listed pipeline also prints the first 16 vec4 of its user uniform blocks (c3 and up), read from
+// TOTK_DUMP_UBO=1: each listed pipeline also prints the first 32 vec4 of its user uniform blocks (c3 and up; =<n>: the
+// first n, to read a whole bone palette), read from
 // guest memory when the entry is listed. A block the submission rewrites with UpdateUniformBuffer shows its value from
 // before the submission (vk_exec_draw.c upd_note).
+// TOTK_DUMP_VBUF=1: each listed pipeline's vertex streams are also written whole (up to 16 MiB each) to
+// vb_<address>.bin, so every vertex can be transformed offline with the printed uniform blocks; draws with other
+// vertex buffers are listed as entries of their own.
 // TOTK_DUMP_SKIP_RUNS=1: a render pass with the same targets as the render pass before it is logged but not copied
 // (the terrain decals draw one pass each into the G-buffer and would use up both caps).
 #include <math.h>
@@ -51,6 +55,7 @@ static char dir[400];
 static FILE *passes_f, *images_f;
 static int seq, finished, copied;      // copied: passes and dispatches of the dump frame whose images were copied
 static int skip_runs, dump_ubo;        // TOTK_DUMP_SKIP_RUNS, TOTK_DUMP_UBO
+static int dump_vbuf;                  // TOTK_DUMP_VBUF
 static uint32_t want_tex[16][2];       // TOTK_DUMP_TEX: slot id and 0, or width and height
 static int nwant_tex;
 static uint64_t last_targets;          // targets_sig of the last render pass; 0 after a dispatch
@@ -606,6 +611,15 @@ static void describe_vertex(Str *b, const VkExec *ex, const VkPipeState *s, cons
                 memcpy(f, w, sizeof f);
                 sp(b, "\n      v%u: %08x %08x %08x %08x | %g %g %g %g", v, w[0], w[1], w[2], w[3], f[0], f[1], f[2], f[3]);
             }
+            if (dump_vbuf) {   // TOTK_DUMP_VBUF: the whole bound range, to transform every vertex offline
+                char path[600];
+                snprintf(path, sizeof path, "%s/vb_%llx.bin", dir, (unsigned long long)r->address);
+                FILE *vf = fopen(path, "wb");
+                if (vf) {
+                    fwrite((const void *)(uintptr_t)r->address, 1, (size_t)(avail < (16u << 20) ? avail : (16u << 20)), vf);
+                    fclose(vf);
+                }
+            }
         } else {
             sp(b, " (not host-readable)");
         }
@@ -636,7 +650,7 @@ static void describe_bindings(Str *b, const VkExec *ex, const VkPipeInfo *info) 
             if (u->addr && vk_mem_resolve(u->addr, 1, &ms)) {
                 uint64_t n = u->size && u->size < ms.avail ? u->size : ms.avail;
                 const float *f = (const float *)(uintptr_t)u->addr;
-                for (uint64_t k = 0; k < 32 && (k + 1) * 16 <= n; k++)
+                for (uint64_t k = 0; k < (uint64_t)dump_ubo && (k + 1) * 16 <= n; k++)
                     sp(b, "%s[%llu] %g %g %g %g", k % 4 ? " " : "\n      ", (unsigned long long)k, f[4 * k], f[4 * k + 1],
                        f[4 * k + 2], f[4 * k + 3]);
             } else {
@@ -740,6 +754,8 @@ void vk_dump_draw(VkExec *ex, const VkPipeState *s, VkPipeline p, const VkPipeIn
     memcpy(&fixed[2], &s->blend[0], sizeof s->blend[0]);
     fixed[3] = (uint64_t)s->depth_clamp << 32 | s->color.blend_en << 8 | (s->chmask.mask & 15);
     for (int k = 0; k < 4; k++) th = (th ^ fixed[k]) * 0x100000001b3ull;
+    // TOTK_DUMP_VBUF: draws with other vertex buffers get entries of their own, so each mesh's streams are written.
+    for (int k = 0; dump_vbuf && k < 16; k++) th = (th ^ ex->vbuf[k].address) * 0x100000001b3ull;
     for (int i = 0; i < nents; i++)
         if (ents[i].p == p && ents[i].th == th) {
             ents[i].draws++;
@@ -958,6 +974,16 @@ void vk_dump_request(void) {
         rt_log("vk_dump: F9: frame %llu goes to %s", (unsigned long long)want, dir);
 }
 
+// TOTK_DUMP=bcview: like key, but the first render pass into a BC texture's block view (vk_exec.c begin_pass) starts
+// the dump in its own frame: a GPU encoder that runs once (Splatoon Raiders' body mask, at the outfit's load) is in it.
+static int dump_bc_mode;
+void vk_dump_request_bc(void) {
+    if (!dump_bc_mode || finished) return;
+    uint64_t want = frame_now(), none = UINT64_MAX;
+    if (__atomic_compare_exchange_n(&dump_frame, &none, want, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        rt_log("vk_dump: first draw into a BC block view: frame %llu goes to %s", (unsigned long long)want, dir);
+}
+
 // TOTK_DUMP=probe: like key, but vk_texture.c asks for the dump itself, `ahead` frames after the game starts baking
 // its 78-layer reflection cube arrays (Splatoon Raiders), so the passes that fill them are in the dump.
 static int dump_probe_mode;   // TOTK_DUMP=probe
@@ -971,7 +997,8 @@ void vk_dump_request_in(unsigned ahead) {
 
 void vk_dump_init(void) {
     const char *e = cfg_get("TOTK_DUMP");
-    if (e && (!strcmp(e, "key") || !strcmp(e, "probe"))) dump_on_key = 1, dump_probe_mode = !strcmp(e, "probe"), dump_frame = UINT64_MAX;
+    if (e && (!strcmp(e, "key") || !strcmp(e, "probe") || !strcmp(e, "bcview")))
+        dump_on_key = 1, dump_probe_mode = !strcmp(e, "probe"), dump_bc_mode = !strcmp(e, "bcview"), dump_frame = UINT64_MAX;
     else if (!e || !*e || !(dump_frame = strtoull(e, NULL, 10))) return;
     dump_min_draws = cfg_int("TOTK_DUMP_MIN_DRAWS");
     const char *pr = cfg_get("TOTK_DUMP_PAIR");
@@ -981,7 +1008,9 @@ void vk_dump_init(void) {
     const char *sr = cfg_get("TOTK_DUMP_SKIP_RUNS");
     skip_runs = sr && *sr && *sr != '0';
     const char *du = cfg_get("TOTK_DUMP_UBO");
-    dump_ubo = du && *du && *du != '0';
+    dump_ubo = !du || !*du || *du == '0' ? 0 : atoi(du) > 1 ? atoi(du) : 32;   // vec4 printed per block
+    const char *vb = cfg_get("TOTK_DUMP_VBUF");
+    dump_vbuf = vb && *vb && *vb != '0';
     const char *wt = cfg_get("TOTK_DUMP_TEX");
     for (char *q = (char *)wt; q && *q && nwant_tex < 16; q += *q == ',') {
         uint32_t *w = want_tex[nwant_tex++];

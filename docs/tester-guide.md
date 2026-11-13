@@ -1,8 +1,8 @@
-# Tester guide: running TotK Recomp on your GPU
+# Tester guide: running TotK Recomp on your GPU (inherited)
 
 > [!NOTE]
-> This page comes from TotK Recomp, which DKB Recomp is built on, and describes *Tears of the Kingdom*. For Donkey
-> Kong Bananza, see [dkb-testing.md](dkb-testing.md).
+> This page comes from TotK Recomp and describes the inherited *Tears of the Kingdom* target, which SPR Recomp does
+> not maintain. To test *Splatoon Raiders*, see [dkb-testing.md](dkb-testing.md).
 
 This guide is for testing the build on a GPU other than the developer's (AMD RX 9070). You build it from source with
 your own copy of the game and your own console keys. Nothing from the game is in this repository, and nothing you build

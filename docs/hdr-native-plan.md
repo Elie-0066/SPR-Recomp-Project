@@ -1,5 +1,9 @@
 # Native HDR10: assessment and plan
 
+> [!NOTE]
+> Inherited from DKB Recomp: the measurements and the game's HDR mode below are Bananza's. Not tried with *Splatoon
+> Raiders*.
+
 Status: route A (the game's own HDR mode) and the highlight rewrite (`spirv_hdr_shoulder.c`) are in the runtime, measured in play and checked by eye on one HDR TV (2026-11-10). Started 2026-11-09 against `bananza` at `9ea44ad`, game 3.2.0 (`dkb458752`).
 
 "Native HDR" here means the picture's highlights come from the game's own high-range scene, not from stretching the

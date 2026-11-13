@@ -1,73 +1,41 @@
-# Testing DKB Recomp
+# Testing SPR Recomp
 
-This guide is for running DKB Recomp on your own PC and reporting what happens. You build it from source with your own
-copy of the game. Nothing from the game is in this repository, and nothing you build from it may be shared: not the
-executable, not the generated code, not the shader cache.
+This guide is for running SPR Recomp, the recompilation of *Splatoon Raiders*, on your own PC and reporting what
+happens. You build it with your own copy of the game. Nothing from the game is in this repository, and nothing you build
+from it may be shared: not the executable, not the generated code, not the shader cache.
+
+The runtime and most settings below come from DKB Recomp and TotK Recomp; settings that only act on those games say so.
 
 ## What you need
 
 - Windows 10 or 11 on an x86-64 CPU with AVX2.
-- 16 GB of RAM plus a large page file (32 GB is comfortable). The game commits about 14 GB (13.5 GiB at the start, 13.75 GiB after 40 minutes in the tutorial and first mine,
-  rising about 6 MB per minute, peak 15.3 GiB; sessions over an hour are untested), so close other large programs first.
-- A GPU with Vulkan 1.3 and a current driver.
-- About 15 GB free for the build (the packed RomFS is about 9 GB), besides the space your dump takes.
-- *Donkey Kong Bananza* base version 1.0.0 or update 3.2.0 (title version 458752), dumped from your own Switch 2: the
-  ExeFS (`main`, `sdk`, `main.npdm`) and the RomFS as a folder, or a `.nup` file. The installer picks the target by the
-  `main` hash and, for 3.2.0 only, keeps the generated C and objects in `temp/gen` and `temp/build` so a second install
-  does not relift or recompile; the base install removes them. This project does not explain how to dump the game.
-  A `.nup` file (the container Eglantine and Eden load) goes straight to the installer (`--nup`, [installer.md](installer.md)).
-  For a build by hand, `tools/extract_nup.py` writes the folders: `python tools\extract_nup.py <game>.nup --list` shows
-  the packages, and `python tools\extract_nup.py <game>.nup --select latest --out build\extracted\dkb-dump` writes
-  `exefs` and `romfs` there as Eglantine runs them (the newest update's ExeFS, the base RomFS with the update's laid
-  over it; `--select base` for 1.0.0), checking every file's SHA-256. Pass those two folders to the commands in the
-  README, with `dkb458752` and `recomp\patches-dkb458752.txt` in place of `dkb100` for 3.2.0.
-
-On Apple Silicon macOS the same steps work ([building.md](building.md), "macOS"): the commands use
-`.venv/bin/python`, the executable is `build/dkb100/dkb`, and the renderer is MoltenVK. The game boots to the mode
-select, but the destructible terrain is not drawn yet, because Metal has no geometry stage.
+- 16 GB of RAM plus a large page file (32 GB is comfortable): the process commits about 11 GB in the first gameplay zone.
+- A GPU with Vulkan 1.3 and a current driver (tested on an RTX 3050).
+- About 6 GB free for the build, besides the space your dump takes.
+- *Splatoon Raiders* update 65536, dumped from your own Switch 2: the update's ExeFS and the merged RomFS as folders, or
+  a `.nup` file. The installer checks the ExeFS against `tools/data/expected-raiders.json` and refuses any other
+  version. This project does not explain how to dump the game.
 
 ## Build
 
-Install the toolchain from [building.md](building.md) (MSYS2 UCRT64 Clang, Ninja, Python 3.12 in `.venv`, .NET SDK),
-then run the commands in the README, "Building from source". The executable ends up in `build\dkb100\dkb.exe`.
-
-The generation command must include `--patches recomp\patches-dkb100.txt`. This enables the controller setup patch
-that bypasses the game's HID server proxy, which the host does not implement. If you generated the code without
-that argument, rerun the README's generation command with it and then rebuild with `tools\build_game.py`.
-Rebuilding alone leaves the unpatched generated code in place and the game stops during controller setup.
+The [installer](installer.md) builds everything in one go (`--game raiders`). By hand, follow
+[building.md](building.md), "Build (Splatoon Raiders)": the executable ends up in `build\raiders\spr-recomp.exe`.
 
 ## Run
 
 ```
-build\dkb100\dkb.exe
+cd build\raiders
+.\spr-recomp.exe --boot
 ```
 
-Run it from inside the repository: it finds the shader translator (`build\xlate\totk_xlate.exe`) by looking up from
-its own folder. The first run translates every shader it meets and is slow; later runs use the cache.
-
-Prepare the shaders once (the Bananza installer does this as its `dkb_shaders` step): the game's own shader files hold
-about 18,800 shader stages, and translating one the first time a draw needs it takes about 35 ms, with the draw waiting.
-On a first visit to an area that adds up to seconds. These two steps translate them all up front, from your own game
-files:
-
-```
-.venv\Scripts\python tools\dkb_shader_census.py --version dkb100 --out build\dkb100
-build\dkb100\dkb.exe --prepare-shaders
-```
-
-The first reads the shader folders of the extracted RomFS (4 seconds) and writes `seed-nvn2.bin` (about 187 MiB) next to
-`dkb.exe`; the second lowers and translates every stage into the shader cache. Each stage is translated with the default
-answers (every texture a 2D texture, float vertex inputs and colour outputs), and each vertex stage again for the integer
-vertex layouts met so far (Locations 6, 6 and 7, 3 and 4) plus any layout your own `shader-answers.bin` recorded. That
-takes about 150 seconds on 20 threads and about 2.9 GB of cache. The pack is deleted afterwards by the installer.
-`--prepare-shaders` also builds the driver's pipeline libraries in the same process. The installer instead runs
-`--translate-shaders` (translation only) and then `--warm-shaders` (libraries only), so a driver crash in the second
-cannot fail the first.
-
-In a cold run of the first area this cut the shaders translated during play from 714 to 62, the worst translation stall
-from 6.6 s to 0.34 s, and the 1% low of the last window from 24 to 39 fps. What is left is about 1.4% of the stages the
-game loads: 38 embedded in `main` and about 50 whose code is in no file the census reads. They translate on first use, and
-play records them. `DKB_ANSWER_STATS=1` logs each translation made in play with what made it necessary.
+Run it from its build folder inside the repository: it finds the shader translator (`build\xlate\totk_xlate.exe`) by
+looking up from its own folder. Prepare the shaders once first (the installer does this as its `dkb_shaders` step;
+[building.md](building.md), step 5): translating a stage the first time a draw needs it makes that draw wait, which adds up
+to seconds on a first visit to an area. The census writes `seed-nvn2.bin` (3,690 stages); `--translate-shaders`
+translates every stage into the shader cache and `--warm-shaders` builds the driver's pipeline libraries, in two
+processes so that a driver crash in the second cannot fail the first. What is left (stages embedded in the executable,
+or whose code is in no file the census reads) translates on first use, and play records it. `DKB_ANSWER_STATS=1` logs
+each translation made in play with what made it necessary.
 
 Useful settings, as environment variables (`set NAME=value` in the same Command Prompt):
 
@@ -84,7 +52,7 @@ Useful settings, as environment variables (`set NAME=value` in the same Command 
 | `TOTK_WB_ASYNC=1` | Writes a deferred guest read's render target back without making the replay wait: the copy is submitted and lands in the storage at a later poll (`vk_texture.c` `vk_texture_wb_poll`), unless the CPU rewrote the storage meanwhile. Off by default: no fps gain beyond run-to-run noise was measured, and 30-45% of the late copies found the storage rewritten and were dropped. |
 | `TOTK_PERF_SLOW_GPU_MS=<ms>` | With `TOTK_TRACE=perf`, a replay part that runs this long on the GPU (default 100) gets a line with its draw and dispatch counts and the NVN 2 names of its stages, a second line with the arguments of its indirect draws as read back afterwards, and a third saying whether a shader in that part wrote the largest one's arguments, and which. |
 | `TOTK_FIX_SCREEN_UV=0` (or `DKB_FIX_SCREEN_UV=0`) | Leaves the map's mask shader as the game wrote it. By default its screen position is computed from `gl_FragCoord` instead of read from varyings the vertex stage divided by w: the camera sits inside the box that shader draws, and on AMD (Eglantine as well) the faces behind the camera turned the varyings into long cyan wedges across the map. The shader is recognised by its NVN 2 name or the hash of its translated SPIR-V, and the log names it when it is rewritten (`vk: fs 544677ae4ec509be ... rebuilt from gl_FragCoord`). |
-| `TOTK_DUMP=key` (or `DKB_DUMP=key`) | Frame dump on a key: press F9 in the game window and the frame after next is dumped to `dump\` (`passes.txt`, one PNG per pass target; `TOTK_DUMP=<frame>` dumps a fixed frame instead). With `DKB_DUMP_UBO=1`, `passes.txt` also lists each pipeline's uniform blocks; it always lists the vertex inputs. The PNGs show the game: never attach them publicly. One dump per run. |
+| `TOTK_DUMP=key` (or `DKB_DUMP=key`) | Frame dump on a key: press F9 in the game window and the frame after next is dumped to `dump\` (`passes.txt`, one PNG per pass target; `TOTK_DUMP=<frame>` dumps a fixed frame instead). `TOTK_DUMP=bcview` starts the dump in the frame of the first draw into a BC texture's block view (a GPU encoder that runs once, such as Raiders' body mask). With `DKB_DUMP_UBO=1`, `passes.txt` also lists the first 32 vec4 of each pipeline's uniform blocks (`=<n>`: the first n); it always lists the vertex inputs. `TOTK_DUMP_VBUF=1` also writes each listed draw's whole vertex streams to `vb_<address>.bin`, one entry per set of vertex buffers. `TOTK_DUMP_MIN_DRAWS=<n>` leaves out the images of passes with fewer draws. The PNGs show the game: never attach them publicly. One dump per run. |
 | `TOTK_LIST_RESTART=0` (or `DKB_LIST_RESTART=0`) | Draws triangle lists without primitive restart, as before. By default a list draw restarts at its restart index, as on the Switch, when the GPU has `primitiveTopologyListRestart` (the log says which at start-up); without it the restart indices are fetched as vertices and give long stretched triangles, as on the map. For comparisons only. |
 | `TOTK_FIX_INDIRECT_RESET=0` | Draws the terrain's indirect-record reset program as a shader instead of the host doing its stores (#48). The shader's stores are lost, so the records keep zero or stale contents; for comparisons only. |
 | `TOTK_EXPERIMENTAL_GEOMETRY=1` | Replays draws with an ordinary geometry stage through it (#52). Off by default; other geometry draws are rejected once in the log. |
@@ -118,7 +86,9 @@ The settings keep TotK Recomp's `TOTK_` names, so its fixes apply without a rena
 Command-line options: `--seconds S` stops the run after S seconds of game time, and `--shot frame.png` with it saves
 that frame. A shot is for your own debugging; do not post it if it shows game content.
 
-## Add-on content (untested in game)
+## Add-on content (Bananza, untested in game)
+
+Inherited from DKB Recomp; Raiders has not been tried with add-on content.
 
 Nothing in the game has been run with add-on content (DLC) yet: the reader (`runtime/aoc_romfs.c`) is checked on a
 synthetic pack (`tests/aoc_romfs_test.py`) and by `--probe-aoc` on a real one, and that is all. Update 3.2.0 is the
@@ -140,7 +110,10 @@ copy build\aoc-pack\index\romfs-index.bin "<exe folder>\aoc-<n>\aoc-index.bin"
 `romfs-index.bin`, which the reader wants under the name `aoc-index.bin`. Then `dkb.exe --probe-aoc` mounts the first
 pack and reads up to 64 files back whole; with `DKB_AOC_SOURCE=<dlc>` it also compares them with the folder.
 
-## Experimental ultrawide mode
+## Experimental ultrawide mode (Bananza only)
+
+This section describes DKB Recomp's Bananza patches. The Raiders build has no patch sets, so the ultrawide, resolution
+and real-time settings do nothing there (the log says so at start-up).
 
 Bananza 1.0.0 supports an optional wider horizontal camera view with proportional UI.
 The title/main-menu background fills the wider viewport: its wall and atmosphere are
@@ -209,13 +182,12 @@ deltas).
 
 ## What to report
 
-Open an issue with the issue form, or comment on [#3](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues/3)
-(GPU testing) or [#7](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues/7) (playing further):
+SPR Recomp is a private fork: report to its maintainer, not to the DKB Recomp or TotK Recomp issue trackers. Include:
 
 - the commit you built (`git rev-parse --short HEAD`);
 - GPU, driver version and Windows version;
 - how far the game got and what you did just before it stopped;
-- the log, `logs\dkb.log` next to `dkb.exe` (`logs\totk.log` in builds before the rename), as an attachment. After a crash, copy it before you start the game
+- the log, `logs\dkb.log` in the build folder, next to `spr-recomp.exe`. After a crash, copy it before you start the game
   again: the next run renames it to `dkb.1.log`.
 
-Never attach game files, keys, builds or the shader cache, and never paste key values into a log or an issue.
+Never attach game files, keys, builds, dumps or the shader cache, and never paste key values into a log or an issue.

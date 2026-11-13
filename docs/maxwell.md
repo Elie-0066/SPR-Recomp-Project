@@ -1,5 +1,9 @@
 # Maxwell / NVN behaviour a port must reproduce
 
+> [!NOTE]
+> Shared reference, inherited from TotK Recomp and DKB Recomp: it applies to *Splatoon Raiders* as to any NVN game.
+> Examples name the game they were found in.
+
 Reference for diagnosing graphics bugs. Each item: what Maxwell (GM20B, 3D class `B197`, compute `B1C0`) and NVN do,
 what Vulkan / AMD (RDNA4, our GPU0) do instead, how emulators and ports handle it, and the source. Items are ordered by
 how likely they are to cause visible artifacts. "Ours:" marks what our runtime does (grep-level look, see section 7;

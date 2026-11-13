@@ -16,8 +16,8 @@ copy of the game, and the executable you build from it is for your own use only.
 ## Status
 
 **Early, playable in parts.** The title, the opening cutscene, the character creator, the hub and the first gameplay
-zone render and play at about 60 fps on the test machine (Ryzen 5 4500, RTX 3050). Known open issues: the player's
-body does not draw (the head and clothes do), and the game's neural-network upscaler is stood in for by FSR 1 EASU.
+zone render and play at about 60 fps on the test machine (Ryzen 5 4500, RTX 3050). Known open issue: the game's
+neural-network upscaler is stood in for by FSR 1 EASU.
 
 | Phase | State |
 | --- | --- |
@@ -26,7 +26,7 @@ body does not draw (the head and clothes do), and the game's neural-network upsc
 | Horizon host | Boots through `nnMain`, the RomFS mount, HID, audio, saves and the character creator. |
 | NVN 2 | Draws, passes, compute and presents work; a few procs (DLSS, dirty tile maps) are still missing. |
 | Shaders | Eglantine lowers all 3,690 seed stages. |
-| Gameplay | The first zone plays at about 60 fps; the player's body is missing. |
+| Gameplay | The first zone plays at about 60 fps, with the player's body. |
 
 The detailed, current phase plan is [docs/raiders-plan.md](docs/raiders-plan.md). Shared architecture, build instructions,
 and graphics notes are in [docs/architecture.md](docs/architecture.md), [docs/building.md](docs/building.md), and

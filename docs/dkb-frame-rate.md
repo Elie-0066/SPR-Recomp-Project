@@ -1,5 +1,9 @@
 # Experimental Bananza frame timing
 
+> [!NOTE]
+> Inherited from DKB Recomp: these timing patches exist only for Bananza. The *Splatoon Raiders* build has no patch
+> sets, so these settings do nothing there.
+
 Bananza 1.0.0 can adjust game timing to measured frame duration. This is
 experimental and off by default. Enable the existing **Game speed follows the
 clock** option (`DKB_REALTIME=1`, or `realtime = 1` in `dkb.ini`; `TOTK_REALTIME` is still accepted) and restart

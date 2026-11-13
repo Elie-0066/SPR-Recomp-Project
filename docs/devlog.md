@@ -1,5 +1,9 @@
 # Devlog
 
+> [!NOTE]
+> DKB Recomp's devlog, kept for history. SPR Recomp's progress on *Splatoon Raiders* is in
+> [raiders-plan.md](raiders-plan.md).
+
 Milestones of DKB Recomp, newest first. The plan they follow is [bananza-plan.md](bananza-plan.md); open work is in
 the [roadmap issue](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues/10).
 

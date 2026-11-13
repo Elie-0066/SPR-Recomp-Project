@@ -630,6 +630,7 @@ int vk_geometry_supported(void);                   // 1: the device has geometry
 uint8_t vk_geometry_input(uint32_t nvn_primitive);    // GFX_GEOMETRY_*; 0 for unsupported/emulated input primitives
 // TOTK_DUMP=key (vk_dump.c): F9 in the game window dumps the frame after next; the window calls this on the key.
 void vk_dump_request(void);
+void vk_dump_request_bc(void);   // TOTK_DUMP=bcview: a pass into a BC block view starts the dump
 void vk_dump_request_in(unsigned ahead);   // TOTK_DUMP=probe: the dump goes to the frame `ahead` frames from now
 VkFormat vk_vertex_format(int nvn_format, int *type);     // attribute format (supported fallback), GFX_TYPE_* in *type
 PFN_vkCmdPushDescriptorSetKHR vk_pipeline_push_fn(void);  // after the first vk_pipeline_* call
