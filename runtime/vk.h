@@ -288,13 +288,14 @@ void vk_usnap_end(uint64_t fence);
 int vk_usnap_find(uint64_t addr, uint64_t n, uint64_t align, VkDescriptorBufferInfo *out);
 const void *vk_usnap_bytes(uint64_t addr, uint64_t n);   // the copy's bytes for the CPU; NULL: not copied or dropped
 void vk_usnap_drop(uint64_t addr, uint64_t n);   // the replay makes the GPU write [addr, addr+n) of guest memory
+void vk_usnap_note_write(uint64_t addr, uint64_t n);   // as vk_usnap_drop for later submissions; this one's copies stay
 uint64_t vk_usnap_arena_bytes(void);                 // arenas created so far (all kept until shutdown)
 uint64_t vk_usnap_gen(void);                      // changes whenever a binding may resolve differently
 void vk_usnap_shutdown(void);                     // vk_exec_draw_shutdown: frees the arenas
 void vk_mem_mirror_begin(void);
 int vk_mem_mirror_end(VkCommandBuffer cb, uint64_t fence);
 int vk_mem_mirror_pending(void);
-void vk_mem_mirror_prologue(VkCommandBuffer cb);
+void vk_mem_mirror_prologue(VkCommandBuffer cb, uint64_t fence);   // fence: the part it precedes (staging lifetime)
 // Shadow storage (vk_memory.c): vk_sync.c calls vk_mem_shadow_sync right before each submit; the replay notes every GPU
 // write into CPU-visible memory at record time (vk_mem_gpu_pending) and reports it at the fence with vk_gpu_written,
 // which copies the bytes back into guest memory before telling the texture cache (vk_guest_written).
@@ -568,6 +569,8 @@ typedef struct {
     VkShaderStageFlags stages;
     const GfxShaderRes *res;               // the stage's reflection entry; NULL for the support buffer
     uint8_t set;                           // descriptor set: 0, or 1 for the fragment stage with independent layouts
+    uint32_t ubo_read;                     // GFX_RES_UBO: bytes from the block's start the shader can read (vk_pipeline.c
+                                           // ubo_read_bytes); 0 unknown (any)
 } VkPipeBinding;
 typedef struct {
     VkPipeline pipeline;                   // VK_NULL_HANDLE when creation failed

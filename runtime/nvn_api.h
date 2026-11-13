@@ -43,6 +43,7 @@ _Static_assert(sizeof(nvn_mapping_t) == 0x28, "NVNmappingRequest stride");
 
 const pool_t *nvn_pool_find(uint64_t addr, uint64_t len);  // GPU-visible pool holding [addr, addr+len], NULL if none
 uint64_t nvn_new_serial(void);                             // next tex_t / prog_t serial, from 1
+int nvn_submit_wait_mode(void);                            // DKB_SUBMIT_WAIT (nvn_api_core.c)
 uint64_t nvn_fence_last(void);                             // fence value of the newest submit (0 before the first)
 int nvn_depth_minus_w(void);                               // 1 after DeviceSetDepthMode(NEAR_IS_MINUS_W), else 0
 int nvn_device_api_minor(void);                            // NVNdeviceInfo API minor version this build's gate accepts

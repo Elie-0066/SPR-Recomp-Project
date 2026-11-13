@@ -51,6 +51,8 @@ enum { PERF_CNT_PIPE_ASYNC, PERF_CNT_PIPE_SKIP, PERF_CNT_TEX_UP, PERF_CNT_TEX_RE
        PERF_CNT_WB, PERF_CNT_WB_SKIP, PERF_CNT_N };
 void perf_count(int kind);
 void perf_present(uint64_t frame);
+uint64_t perf_frames_presented(void);
+void perf_tl(const char *what, uint64_t a, uint64_t b);   // DKB_TIMELINE event (perf.c)           // perf_present calls so far
 void perf_summary_flush(void);                  // prints the frame-time summary of the running period (exit); the 60 s lines come from perf_present
 void gfx_exit_log(void);                        // back end's lines for the exit summary (weak no-op in prof_win.c)
 int vk_backend_selftest(void);                  // replay write-back deduplication cases; failures (vk_backend.c)

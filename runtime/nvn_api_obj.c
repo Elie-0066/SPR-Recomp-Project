@@ -708,7 +708,7 @@ NVN_API(nvnWindowFinalize) { (void)c; }
 NVN_API(nvnWindowSetPresentInterval) {
     win_t *o = WN(c);
     int v = (int)arg_x(c, 1);
-    if (o->interval != v) NVN_LOG("present interval %d -> %d", o->interval, v);
+    if (o->interval != v) rt_log("nvn: present interval %d -> %d (frame %llu)", o->interval, v, (unsigned long long)o->presents);
     o->interval = v;
 }
 // void nvnWindowSetCrop(NVNwindow *w, int x, int y, int w, int h)
@@ -788,12 +788,18 @@ NVN_API(nvnQueuePresentTexture) {
     if (o->magic != NVN_WIN_MAGIC || idx < 0 || idx >= o->ntex || idx >= 4 || !o->tex[idx])
         rt_fatal("nvn: QueuePresentTexture of image %d on window %p", idx, (void *)o);
     o->presents++;
+    perf_tl("present-in", nvn_fence_last(), 0);
     const tex_t *t = (const tex_t *)o->tex[idx];
     uint64_t period = present_period(o), now = kern_now_ns();
     uint64_t slot = now + pace(&o->pace, now, period);
     gfx_backend()->present(t, o->crop, slot);
+    if (nvn_submit_wait_mode() == 2) {
+        uint64_t f = nvn_fence_last();
+        if (gfx_backend()->fence_done() < f) gfx_backend()->fence_wait(f, 1000000000ull);
+    }
     o->ticket[idx] = o->presents;
     o->avail[idx] = slot + period;
     frame_step_present(slot, o->interval);   // frame_rate.c: the real-time step follows the display times
     rt_frame_presented(t, o->presents);
+    perf_tl("present-out", 0, 0);
 }

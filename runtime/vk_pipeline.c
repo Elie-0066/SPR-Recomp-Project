@@ -1159,6 +1159,99 @@ static uint32_t binding_span(const GfxShader *s) {
     return span;
 }
 
+// The bytes of the uniform block at (set, binding) that the shader can read: one past the highest array element its
+// access chains reach, when every chain into the block indexes the array with constants. 0 when that is not known: a
+// dynamic index, a use of the block other than an access chain, or no such block. The translator declares every
+// constant bank as 4096 vec4 (64 KiB) whatever the shader reads, and vk_exec_draw.c ub_shadow copies the bound range
+// once per uniform update, so this keeps those copies to what the shader can see.
+static uint32_t ubo_read_bytes(const GfxShader *s, uint32_t set, uint32_t binding) {
+    uint64_t words = 0;
+    const uint32_t *w = gfx_shader_spirv(s, &words);
+    if (!w || words < 5) return 0;
+    enum { OpName = 5, OpMemberName = 6, OpEntryPoint = 15, OpTypeArray = 28, OpTypeStruct = 30, OpTypePointer = 32,
+           OpConstant = 43, OpVariable = 59, OpAccessChain = 65, OpInBoundsAccessChain = 66, OpDecorate = 71,
+           OpMemberDecorate = 72, DecArrayStride = 6, DecBinding = 33, DecSet = 34, ScUniform = 2 };
+    // Pass 1: the variable, its pointee struct and that struct's array member.
+    uint32_t var = 0, vtype = 0, bound = (uint32_t)words;
+    uint32_t *cval = calloc(bound, sizeof *cval);   // OpConstant values by id (+1 to tell 0 from unset)
+    uint8_t *vset = calloc(bound, 1), *vbind_ok = calloc(bound, 1);
+    uint32_t *vbind = calloc(bound, sizeof *vbind), *vsetv = calloc(bound, sizeof *vsetv);
+    uint32_t result = 0;
+    if (!cval || !vset || !vbind_ok || !vbind || !vsetv) goto out;
+    for (uint64_t i = 5; i < words;) {
+        uint32_t n = w[i] >> 16, op = w[i] & 0xffff;
+        if (!n || i + n > words) goto out;
+        const uint32_t *a = w + i + 1;
+        if (op == OpConstant && n >= 4 && a[1] < bound) cval[a[1]] = a[2] + 1;
+        if (op == OpDecorate && n >= 4 && a[0] < bound) {
+            if (a[1] == DecBinding) vbind[a[0]] = a[2], vbind_ok[a[0]] = 1;
+            if (a[1] == DecSet) vsetv[a[0]] = a[2], vset[a[0]] = 1;
+        }
+        i += n;
+    }
+    for (uint64_t i = 5; i < words;) {
+        uint32_t n = w[i] >> 16, op = w[i] & 0xffff;
+        const uint32_t *a = w + i + 1;
+        if (op == OpVariable && n >= 4 && a[2] == ScUniform && a[1] < bound && vbind_ok[a[1]] && vbind[a[1]] == binding &&
+            (vset[a[1]] ? vsetv[a[1]] : 0) == set)
+            var = a[1], vtype = a[0];
+        i += n;
+    }
+    if (!var) goto out;
+    // The pointer type's pointee struct, its first member's array and the array stride.
+    uint32_t pointee = 0, arr = 0, stride = 16;
+    for (uint64_t i = 5; i < words;) {
+        uint32_t n = w[i] >> 16, op = w[i] & 0xffff;
+        const uint32_t *a = w + i + 1;
+        if (op == OpTypePointer && n >= 4 && a[0] == vtype) pointee = a[2];
+        i += n;
+    }
+    for (uint64_t i = 5; i < words;) {
+        uint32_t n = w[i] >> 16, op = w[i] & 0xffff;
+        const uint32_t *a = w + i + 1;
+        if (op == OpTypeStruct && n == 3 && a[0] == pointee) arr = a[1];   // exactly one member
+        i += n;
+    }
+    if (!arr) goto out;
+    int is_array = 0;
+    for (uint64_t i = 5; i < words;) {
+        uint32_t n = w[i] >> 16, op = w[i] & 0xffff;
+        const uint32_t *a = w + i + 1;
+        if (op == OpTypeArray && n >= 4 && a[0] == arr) is_array = 1;
+        if (op == OpDecorate && n >= 4 && a[0] == arr && a[1] == DecArrayStride) stride = a[2];
+        i += n;
+    }
+    if (!is_array || !stride) goto out;
+    // Pass 2: every use of the variable. Access chains must be (var, member 0, constant element, ...).
+    uint32_t hi = 0;
+    for (uint64_t i = 5; i < words;) {
+        uint32_t n = w[i] >> 16, op = w[i] & 0xffff;
+        const uint32_t *a = w + i + 1;
+        if (op == OpName || op == OpMemberName || op == OpDecorate || op == OpMemberDecorate || op == OpEntryPoint ||
+            (op == OpVariable && a[1] == var)) {
+            i += n;
+            continue;
+        }
+        if ((op == OpAccessChain || op == OpInBoundsAccessChain) && n >= 4 && a[2] == var) {
+            if (n < 6) goto out;                                           // the whole array: unknown
+            uint32_t e = a[4];
+            if (e >= bound || !cval[e]) goto out;                          // a dynamic element
+            uint64_t end = ((uint64_t)cval[e] - 1 + 1) * stride;
+            if (end > 0x10000) goto out;
+            if (end > hi) hi = (uint32_t)end;
+            i += n;
+            continue;
+        }
+        for (uint32_t k = 0; k + 1 < n; k++)
+            if (a[k] == var) goto out;                                     // any other use: unknown
+        i += n;
+    }
+    result = hi ? (hi + 255) & ~255u : 0;
+out:
+    free(cval), free(vset), free(vbind_ok), free(vbind), free(vsetv);
+    return result;
+}
+
 // Adds a stage's resources with bindings b >= 1 moved by off; binding 0 (support buffer) is shared.
 static int add_stage(Bindings *B, const GfxShader *s, uint32_t off) {
     int stage = gfx_shader_stage(s);
@@ -1181,6 +1274,7 @@ static int add_stage(Bindings *B, const GfxShader *s, uint32_t off) {
             if (binding > UINT16_MAX) return 0;           // VkPipeBinding must not truncate a stage's binding
             B->b[B->n] = (VkDescriptorSetLayoutBinding){binding, t, count, bit, NULL};
             B->pb[B->n] = (VkPipeBinding){(uint16_t)binding, (uint8_t)stage, (uint8_t)k, t, (uint16_t)count, bit, &r[i]};
+            if (k == GFX_RES_UBO && count == 1) B->pb[B->n].ubo_read = ubo_read_bytes(s, r[i].set, r[i].binding);
             B->n++;
         }
     }

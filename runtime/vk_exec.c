@@ -24,9 +24,13 @@
 #include "nvn_api.h"
 #include "nvn_tex.h"
 #include "platform/platform.h"
+
 #include "tex.h"
 #include "vk.h"
 #include "vk_exec.h"
+static void gpuprof_mark(VkExec *ex, uint32_t what);   // DKB_GPU_PROFILE (vk_gpuprof.c)
+static void gp3_pass_end(VkExec *ex);                  // DKB_GPU_PROFILE=3: one timestamp per render pass
+void vk_texture_prefetch_flush(VkCommandBuffer cb);   // vk_texture.c
 
 #define WEAK __attribute__((weak))
 #define CALL_DEPTH 8
@@ -540,8 +544,11 @@ static VkImageMemoryBarrier2 layout_barrier(VkImage img, VkImageAspectFlags aspe
 
 // Full barrier. The images in the feedback layout become want[] (pass begin) or none (every other barrier): the others
 // go back to GENERAL and the new ones leave it, in the same command.
+void vk_exec_ub_flush(VkExec *ex);   // vk_exec_draw.c: deferred uniform updates into memory
+
 static void barrier_to(VkExec *ex, const VkImage *want, const VkImageAspectFlags *wasp, int nwant) {
     vk_exec_pass_end(ex);
+    vk_exec_ub_flush(ex);   // outside the pass: the deferred uniform updates (the barrier below orders them)
     VkImageMemoryBarrier2 ib[18];
     uint32_t n = 0;
     for (int i = 0; i < ex->nfbl; i++)
@@ -630,6 +637,8 @@ void vk_exec_pass_end(VkExec *ex) {
     for (int i = 0; i < 8; i++)
         if (ex->color[i].image) vk_texture_gpu_written(ex->color[i].tex), tfr_note(&ex->color[i], stamp);
     if (ex->depth.image) vk_texture_gpu_written(ex->depth.tex), tfr_note(&ex->depth, stamp);
+    vk_texture_prefetch_flush(ex->cb);   // vk_texture.c: copies of the small targets the CPU reads after a fence
+    gp3_pass_end(ex);
 }
 
 VkCommandBuffer vk_exec_inline_begin(int *reopen) {
@@ -818,6 +827,7 @@ static void maybe_split(VkExec *ex) {
     split_draws = 0;
     if (ex->recorded == part_start) return;
     ex->cb = vk_sync_split();
+    gpuprof_mark(ex, 0xFFF0);
     part_start = ex->recorded;
     part_t0 = kern_now_ns();
     ex->dirty = VK_EXEC_DIRTY_ALL;
@@ -859,6 +869,7 @@ int vk_exec_read_buffer(VkExec *ex, uint64_t addr, uint64_t size, void *out) {
     vk_mem_count(source.cls, VK_MUSE_COPY_SRC, size);
     VK_MEM_BOUND(source);
     ex->cb = vk_sync_split_wait();   // this prefix, not ex->fence (only the final part signals that value)
+    gpuprof_mark(ex, 0xFFF0);
     split_draws = 0;
     part_start = ex->recorded;
     part_t0 = kern_now_ns();
@@ -873,11 +884,93 @@ int vk_exec_read_buffer(VkExec *ex, uint64_t addr, uint64_t size, void *out) {
     return result == VK_SUCCESS;
 }
 
+#define VK_GPUPROF_OP 0xC0DE000000000000ull   // vk_gpuprof.c prints these keys as op names
+void vk_gpuprof_note(VkCommandBuffer cb, uint64_t fence, uint64_t a, uint64_t b);
+static int gpuprof_on = -1;   // DKB_GPU_PROFILE: 0 off, 1 pipelined timestamps, 2 serialised, 3 per pass (vk_exec_gpuprof_note)
+
+static void gpuprof_init(void) {
+    if (gpuprof_on >= 0) return;
+    const char *e = getenv("DKB_GPU_PROFILE");
+    gpuprof_on = !e || !*e || !strcmp(e, "0") ? 0 : !strcmp(e, "2") ? 2 : !strcmp(e, "3") ? 3 : 1;
+}
+
+// DKB_GPU_PROFILE=3: the GPU time of each render pass and dispatch, keyed by its index in the frame, its size and the
+// fragment (or compute) stage of its first draw. Only the end of a pass or a dispatch drains the GPU (one full barrier,
+// then the timestamp), so the draws inside a pass overlap as in a normal run and each pass is charged what it costs,
+// including the copies, clears and barriers recorded since the previous mark. vk_gpuprof.c prints the keys.
+#define VK_GPUPROF_PASS 0xBA55000000000000ull
+static uint64_t gp3_frame, gp3_pair;
+static uint32_t gp3_seq;
+
+static void gp3_stamp(VkExec *ex, uint32_t w, uint32_t h, uint64_t pair) {
+    uint64_t f = perf_frames_presented();
+    if (f != gp3_frame) gp3_frame = f, gp3_seq = 0;
+    VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                           .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT, .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                           .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT};
+    VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
+    vkCmdPipelineBarrier2(ex->cb, &di);
+    uint64_t a = VK_GPUPROF_PASS | (uint64_t)(gp3_seq++ & 0xffff) << 32 | (uint64_t)(w & 0xffff) << 16 | (h & 0xffff);
+    vk_gpuprof_note(ex->cb, ex->fence, a, pair);
+}
+
+static void gp3_pass_end(VkExec *ex) {
+    gpuprof_init();
+    if (gpuprof_on != 3 || !ex->cb) return;
+    gp3_stamp(ex, ex->pass_w, ex->pass_h, gp3_pair);
+    gp3_pair = 0;
+}
+
+// One profile timestamp keyed (a, b). A timestamp alone does not wait for the draws before it on every driver (the
+// profile then charged a whole frame of rendering to the first full barrier, the mirror write-back), so with
+// DKB_GPU_PROFILE=2 the pass ends and a full barrier drains the GPU first; the pass reopens with LOAD, as
+// vk_exec_inline_end does. That costs a lot of GPU time but charges each draw its own work.
+void vk_exec_gpuprof_note(VkExec *ex, uint64_t a, uint64_t b) {
+    gpuprof_init();
+    if (!gpuprof_on || !ex->cb) return;
+    if (gpuprof_on == 3) {
+        if ((a >> 48) == 0xC0DE) {   // ops: only the command buffer start opens an interval
+            if ((uint16_t)a == 0xFFF0) vk_gpuprof_note(ex->cb, ex->fence, a, b);
+            else if ((uint16_t)a >= 0xFFF1 && (uint16_t)a <= 0xFFF3) {   // the end of a submission, drained
+                VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                                       .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                                       .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+                                       .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                                       .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT};
+                VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1,
+                                       .pMemoryBarriers = &mb};
+                vkCmdPipelineBarrier2(ex->cb, &di);
+                vk_gpuprof_note(ex->cb, ex->fence, a, b);
+            }
+            return;
+        }
+        if (ex->in_pass) {   // a draw: the pass is named after its first one
+            if (!gp3_pair) gp3_pair = b ? b : a;
+            return;
+        }
+        gp3_stamp(ex, 0, 0, a);   // a dispatch
+        return;
+    }
+    if (gpuprof_on == 2) {
+        int reopen = ex->in_pass;
+        ex->barrier_at = -1;   // never skipped as redundant
+        vk_exec_barrier(ex);
+        vk_gpuprof_note(ex->cb, ex->fence, a, b);
+        if (reopen) vk_exec_pass_begin(ex);
+        return;
+    }
+    vk_gpuprof_note(ex->cb, ex->fence, a, b);
+}
+
+// The start of a replay command buffer (0xFFF0) and the work after its last op (0xFFF1) as their own entries.
+static void gpuprof_mark(VkExec *ex, uint32_t what) { vk_exec_gpuprof_note(ex, VK_GPUPROF_OP | what, 0); }
+
 static uint64_t draws_total;   // draws and dispatches walked since the start (vk_exec_draws_total)
 
 uint64_t vk_exec_draws_total(void) { return draws_total; }
 
 static void walk(VkExec *ex, const op_hdr *h, int depth) {
+    gpuprof_init();
     for (;;) {
         if (h->size < sizeof *h || (h->size & 7) || h->op >= OP_COUNT_)
             rt_fatal("vk: corrupt command record at %p: op %u size %u", (const void *)h, h->op, h->size);
@@ -957,6 +1050,16 @@ static void walk(VkExec *ex, const op_hdr *h, int depth) {
             break;
         default: rt_fatal("vk: op %s has no replay handler", nvn_op_name(h->op));
         }
+        if (gpuprof_on) {   // DKB_GPU_PROFILE: the GPU time of passes, clears, barriers and transfers, by op (vk_gpuprof.c)
+            switch (h->op) {
+            case OP_BEGIN: case OP_SET_RT: case OP_CLEAR_COLOR: case OP_CLEAR_DS: case OP_BARRIER: case OP_COPY_B2B:
+            case OP_COPY_B2T: case OP_COPY_T2B: case OP_COPY_T2T: case OP_CLEAR_TEX: case OP_CLEAR_BUF:
+            case OP_REPORT_COUNTER: case OP_RESET_COUNTER: case OP_SIGNAL_EVENT: case OP_UPDATE_UB:
+                vk_exec_gpuprof_note(ex, VK_GPUPROF_OP | h->op, 0);
+                break;
+            default: break;
+            }
+        }
         if (split_draws >= split_n) maybe_split(ex);
         h = nvn_op_next(h);
     }
@@ -969,6 +1072,7 @@ static int record_impl(VkCommandBuffer cb, const uint64_t *handles, int n, uint6
     ex->cb = cb;
     ex->fence = fence;
     ex->submitted_ticks = submitted_ticks;
+    gpuprof_mark(ex, 0xFFF0);
     ex->recorded = 0;
     ex->in_pass = 0;
     ex->dirty = VK_EXEC_DIRTY_ALL;
@@ -990,9 +1094,14 @@ static int record_impl(VkCommandBuffer cb, const uint64_t *handles, int n, uint6
         }
     }
     vk_exec_pass_end(ex);
+    gpuprof_mark(ex, 0xFFF2);
     x_here = 0;
     if (ex->recorded) vk_exec_barrier(ex);   // later submissions see this one's writes
-    if (memory) ex->recorded += vk_mem_mirror_end(ex->cb, fence), vk_usnap_end(fence);   // VRAM mirror bytes the GPU wrote go back to guest memory
+    gpuprof_mark(ex, 0xFFF3);
+    extern int vk_mem_diff_ran;   // vk_memory.c: a write-back by difference bound its own compute pipeline
+    if (memory) ex->recorded += vk_mem_mirror_end(ex->cb, fence), vk_usnap_end(fence);
+    if (vk_mem_diff_ran) vk_mem_diff_ran = 0, vk_exec_draw_new_cb();   // VRAM mirror bytes the GPU wrote go back to guest memory
+    gpuprof_mark(ex, 0xFFF1);
     if (ex->nviews) {
         ViewList *l = malloc(sizeof *l + sizeof(VkImageView) * (size_t)ex->nviews);
         if (!l) rt_fatal("vk: out of memory");

@@ -605,6 +605,14 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                 emit(base(0x5c10000000000000ULL) | (u64{source} << 8) | (u64{250} << 20));
                 break;
             }
+            // DKB Recomp: IMAD Rd, RZ, RZ, -c[bank][offset] (bit 63 negates the constant-buffer addend; Splatoon
+            // Raiders' material stages): the product is zero, so Rd = 0 - c. Loaded into R252, then IADD negates it.
+            if (opcode == 0x624 && insn.Bits(24, 8) == 255 && insn.Bits(64, 8) == 255 && insn.Bits(62, 2) == 2 &&
+                (insn.words[2] & ~0x2ffU) == 0x078e0000 && valid_cbuf()) {
+                emit(0x4c98000000000000ULL | predicate | 252 | (u64{15} << 39) | cbuf());
+                emit(base(0x5c10000000000000ULL) | (u64{255} << 8) | (u64{252} << 20) | (u64{1} << 48));
+                break;
+            }
             if (insn.Bits(24, 8) != 255 || insn.Bits(64, 8) != 255 || insn.words[2] != 0x078e00ff) {
                 if ((insn.words[2] & ~0x2ffU) != 0x078e0000 || (opcode == 0x624 && insn.Bits(62, 2)))
                     return fail(index, "native multiply wide addend mode");
@@ -2544,7 +2552,11 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                 emit(0xe24000000000000fULL | predicate);
                 break;
             }
-            if (main_exited || index == 0 || insn.words[0] != 0x7944 ||
+            // DKB Recomp: a call from inside a callee (after main's EXIT) is accepted too. Splatoon Raiders' large
+            // material fragment stages call helpers from helpers; the Maxwell frontend inlines CAL targets, so a
+            // nested call lowers like a top-level one as long as it does not reuse the caller's link register
+            // (the MOV that sets up its link is checked against the active link above).
+            if (index == 0 || insn.words[0] != 0x7944 ||
                 (insn.words[2] & ~0x3ffffU) != 0x03c00000 ||
                 (code[index - 1].words[0] & ~0x00ff0000U) != 0x00007802 ||
                 code[index - 1].Bits(16, 8) >= 250 ||

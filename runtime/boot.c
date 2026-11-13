@@ -366,6 +366,33 @@ static void hang_watch_main(void *arg) {
     }
 }
 
+// A frame that takes over 60 ms while the host's own replay took a few: sample what the guest threads wait for at 40 and
+// 70 ms into it, for the first 6 such frames, so the log names the wait the game is stuck in.
+static void slow_watch_main(void *arg) {
+    (void)arg;
+    static char sample[8192];
+    uint64_t last = 0, t0 = plat_now_ns();
+    int sampled = 0, logged = 0;
+    for (;;) {
+        plat_sleep_ms(3);
+        uint64_t f = gfx_stats().frames, now = plat_now_ns();
+        if (f != last || !f) {
+            unsigned ms = (unsigned)((now - t0) / 1000000);
+            // The frame that just ended took 70-140 ms (the pattern of a play scene, not a load): keep the sample taken in it.
+            if (sampled && last > 900 && ms >= 70 && ms <= 140 && logged < 8) {
+                logged++;
+                rt_logf("slow: frame %llu took %u ms; at 45 ms the guest threads were:\n%s", (unsigned long long)last + 1, ms, sample);
+            }
+            last = f, t0 = now, sampled = 0;
+            continue;
+        }
+        if (!sampled && (unsigned)((now - t0) / 1000000) >= 45 && last > 900) {
+            kern_slow_sample(sample, sizeof sample);
+            sampled = 1;
+        }
+    }
+}
+
 static void prewarm_main(void *arg) {
     (void)arg;
     gfx_backend()->boot_prewarm();
@@ -383,6 +410,7 @@ static void boot_main(void *arg) {
     if (!rt_config()->shot) gfx_backend()->boot_async();   // a --shot image must not depend on build timing
     // Shaders and pipelines recorded in earlier runs are made ready while the modules load; the guest waits for them.
     plat_thread_spawn(hang_watch_main, NULL, "hangwd", 0);
+    plat_thread_spawn(slow_watch_main, NULL, "slowwd", 0);
     PlatThread *warm = plat_thread_new(prewarm_main, NULL, "prewarm");
     ov_system_preload();
     ldr_load(rt_config()->exefs);

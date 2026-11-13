@@ -410,7 +410,10 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=
         '  description = CC $in',
         '',
         'rule rc',
-        f'  command = {cmd_arg(WINDRES.as_posix())} -I {cmd_path(RUNTIME)} -O coff $in -o $out',
+        # A game.ico in the build folder (the game's own logo, game content kept out of the repository) replaces
+        # dkb.ico: windres looks the icon up in the include directories, the build folder first.
+        f'  command = {cmd_arg(WINDRES.as_posix())} -I {cmd_path(out)} -I {cmd_path(RUNTIME)}'
+        f'{" -D GAME_ICON" if (out / "game.ico").is_file() else ""} -O coff $in -o $out',
         '  description = RC $in',
         '',
         'rule link',
@@ -441,7 +444,7 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=
         o = runtime_object(out, src)
         if src.suffix == '.rc':   # windres writes no depfile: the files totk.rc embeds are listed by hand
             lines.append(f'build {ninja_path(o)}: rc {ninja_path(src)} | {ninja_path(RUNTIME / "totk.manifest")} '
-                         f'{ninja_path(RUNTIME / "dkb.ico")}')
+                         f'{ninja_path(out / "game.ico" if (out / "game.ico").is_file() else RUNTIME / "dkb.ico")}')
         else:
             lines.append(f'build {ninja_path(o)}: cc_rt {ninja_path(src)}')
             if src.suffix == '.cpp':   # the Ampere lowering headers (runtime/third_party/eglantine) need C++20

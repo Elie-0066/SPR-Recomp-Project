@@ -126,6 +126,7 @@ void perf_count(int kind) {
 typedef struct { uint64_t frame, ns, wait[PERF_N], replay; } FtWorst;
 static struct {
     uint64_t t0, frames, sum, over25, over50, over100;
+    uint64_t gpu0;   // perf_gpu_busy_total at t0 (GPU timestamps: TOTK_TRACE=perf or the full overlay)
     uint32_t hist[FT_BINS];
     FtWorst worst[FT_WORST];   // slowest first
     int nworst;
@@ -142,6 +143,11 @@ static void ft_report(uint64_t now, const char *tag) {
         rt_log("frametime: %s: %llu frames in %.1f s, mean %.1f fps, 1%% low %.1f fps, over 25 ms %llu, 50 ms %llu, 100 ms %llu",
                tag, (unsigned long long)ft.frames, (now - ft.t0) / 1e9, ft.frames * 1e9 / ft.sum, low ? 1e9 / low : 0.0,
                (unsigned long long)ft.over25, (unsigned long long)ft.over50, (unsigned long long)ft.over100);
+        // GPU busy time per frame against the wall time per frame tells a GPU-bound period from one spent waiting.
+        uint64_t gpu = perf_gpu_busy_total();
+        if (gpu > ft.gpu0)
+            rt_log("frametime:   GPU busy %.1f ms per frame (wall %.1f ms per frame)", (gpu - ft.gpu0) / 1e6 / ft.frames,
+                   ft.sum / 1e6 / ft.frames);
         for (int i = 0; i < ft.nworst; i++) {
             const FtWorst *w = &ft.worst[i];
             rt_log("frametime:   worst frame %llu: %.1f ms; shader translation %.1f, pipeline build %.1f, texture upload %.1f (astc %.1f), replay %.1f, fence/present wait %.1f, pacing %.1f",
@@ -152,6 +158,7 @@ static void ft_report(uint64_t now, const char *tag) {
     }
     memset(&ft, 0, sizeof ft);
     ft.t0 = now;
+    ft.gpu0 = perf_gpu_busy_total();
 }
 
 __attribute__((weak)) void gfx_exit_log(void) {}
@@ -296,8 +303,31 @@ static void ab_frame(uint64_t frame, uint64_t d, uint64_t rep, int side) {
            ra > 0 ? 100 * (rb - ra) / ra : 0);
 }
 
+static volatile uint64_t presents;   // perf_present calls (vk_gpuprof.c frames per report)
+
+uint64_t perf_frames_presented(void) { return __atomic_load_n(&presents, __ATOMIC_RELAXED); }
+
+// DKB_TIMELINE=<present>: for 4 presents from that one, every perf_tl event (submits, sync waits, GPU completions,
+// presents, vsync ticks) as one log line with the time in ms since the first, so a frame's waits can be read in order.
+void perf_tl(const char *what, uint64_t a, uint64_t b) {
+    static int64_t from = -1;
+    static uint64_t t0;
+    if (from < 0) {
+        const char *e = getenv("DKB_TIMELINE");
+        from = e ? atoll(e) : 0;
+    }
+    if (!from) return;
+    uint64_t f = perf_frames_presented();
+    if (f < (uint64_t)from || f >= (uint64_t)from + 4) return;
+    uint64_t now = plat_now_ns();
+    if (!t0) t0 = now;
+    rt_log("tl %8.3f f%llu t%u %s %llu %llu", (now - t0) / 1e6, (unsigned long long)f, (unsigned)plat_thread_id(), what,
+           (unsigned long long)a, (unsigned long long)b);
+}
+
 void perf_present(uint64_t frame) {
     static uint64_t last, sum, max, n, win_start, ab_b;
+    __atomic_add_fetch(&presents, 1, __ATOMIC_RELAXED);
     static int64_t win_prev[PERF_CNT_N];
     prof_render_tid = plat_thread_id();
     if (rt_trace & RT_TRACE_SCHED) kern_sched_report(frame);

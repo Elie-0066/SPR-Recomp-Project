@@ -20,6 +20,7 @@
 #include "nvn_api.h"
 #include "nvn_pool_index.h"
 #include "vk.h"
+#include "mirror_diff_spv.h"
 #include "platform/platform.h"
 
 // Timestamps for the tracking cost, in ns; qpc_ms converts.
@@ -902,6 +903,11 @@ static void stamp_range(uint64_t lo, uint64_t hi, uint32_t g) {
     for (uint64_t a = lo; a < hi; a += 1ull << GEN_PAGE_SHIFT) stamp_page(a, g);
 }
 
+// Generations handed to GPU writes into mirrored pools (vk_gpu_written), by generation modulo GPU_GEN_N; an entry
+// overwritten by a later one only makes mirror_sync upload a page it could have skipped.
+#define GPU_GEN_N 65536u
+static uint32_t gpu_gen[GPU_GEN_N];
+
 void vk_guest_written(uint64_t addr, uint64_t size) {
     if (!size || nvn_gpu_only(addr)) return;
     uint64_t lo = addr & ~0xfffull, hi = (addr + size + 0xfff) & ~0xfffull;
@@ -1276,7 +1282,41 @@ void vk_gpu_written(uint64_t addr, uint64_t size) {
         plat_mutex_unlock(&shadow_lock);
         plat_mutex_unlock_shared(&pool_lock);
     }
-    vk_guest_written(addr, size);
+    if (!size || nvn_gpu_only(addr)) return;
+    uint64_t lo = addr & ~0xfffull, hi = (addr + size + 0xfff) & ~0xfffull;
+    // The pages are stamped like a CPU write, so textures over them and other readers of guest memory see the GPU's
+    // bytes. A VRAM mirror is where those bytes came from, though: re-uploading them is a round trip over the bus. Each
+    // GPU write into a mirrored pool takes a generation of its own, listed in gpu_gen, and mirror_sync skips pages whose
+    // newest stamp is such a generation. Only pages whose earlier stamps the mirror already holds (at most r->mgen) get
+    // it; a page with a CPU write the mirror has not copied yet keeps an ordinary stamp and is still uploaded.
+    // Splatoon Raiders binds a 53 MiB storage span (vk_exec_draw.c ssbo_info) whose written range came back here every
+    // submission: 56 MiB of uploads a frame and 20 ms of the GPU waiting for them in the first gameplay zone.
+    PoolRec *r = NULL;
+    static int skip_on = -1;   // DKB_MIRROR_GPU_SKIP=0: GPU writes stamp pages like CPU writes, as before
+    if (skip_on < 0) skip_on = !(getenv("DKB_MIRROR_GPU_SKIP") && !strcmp(getenv("DKB_MIRROR_GPU_SKIP"), "0"));
+    if (vk_mirror_on && skip_on) {
+        plat_mutex_lock_shared(&pool_lock);
+        const pidx_ent *e = pidx_find(&pool_index, addr, size);
+        r = e ? e->buf : NULL;
+        // The record outlives this call: mirrored records retire on the completion thread (mirror_retire), which runs it.
+        if (r && (r->mstate != MS_ON || lo < r->import_lo || hi > r->import_hi)) r = NULL;
+        plat_mutex_unlock_shared(&pool_lock);
+    }
+    plat_mutex_lock(&gen_lock);
+    uint32_t g = ++gen_now, g_cpu = 0;
+    if (r) gpu_gen[g & (GPU_GEN_N - 1)] = g;
+    for (uint64_t a = lo; a < hi; a += 1ull << GEN_PAGE_SHIFT) {
+        if (r) {
+            const uint32_t *cur = gen_slot(a, 0);
+            if (cur && *cur > r->mgen && !(gpu_gen[*cur & (GPU_GEN_N - 1)] == *cur)) {
+                if (!g_cpu) g_cpu = ++gen_now;
+                stamp_page(a, g_cpu);
+                continue;
+            }
+        }
+        stamp_page(a, g);
+    }
+    plat_mutex_unlock(&gen_lock);
 }
 
 static void shadow_log(uint64_t frame) {
@@ -1652,9 +1692,44 @@ static void mirror_retire(void *arg) {
     destroy_rec(vk_ctx(), arg);
 }
 
+// Diagnostic: the pools whose syncs upload the most, logged for windows of 3,000 submissions that upload 4 MiB or more
+// per submission (the first five), with their
+// range, flags and MiB per submission, so a pool the CPU rewrites wholesale each frame can be named.
+static struct { PoolRec *r; uint64_t bytes; } up_t[64];
+static void up_tally(PoolRec *r, uint64_t bytes) {
+    static uint64_t subs0, logs;
+    for (int i = 0; i < 64; i++)
+        if (up_t[i].r == r || !up_t[i].r) { up_t[i].r = r, up_t[i].bytes += bytes; break; }
+    if (!subs0) subs0 = msub;
+    if (msub - subs0 < 3000 || logs >= 5) return;
+    double n = (double)(msub - subs0);
+    uint64_t all = 0;
+    for (int i = 0; i < 64; i++) all += up_t[i].bytes;
+    if (all / n < 4.0 * 1048576) {   // only the heavy windows
+        memset(up_t, 0, sizeof up_t);
+        subs0 = msub;
+        return;
+    }
+    logs++;
+    rt_log("mem: mirror uploads %.1f MiB per submission over %.0f submissions; the largest sources:", all / n / 1048576.0, n);
+    for (int k = 0; k < 4; k++) {
+        int best = -1;
+        for (int i = 0; i < 64; i++)
+            if (up_t[i].r && (best < 0 || up_t[i].bytes > up_t[best].bytes)) best = i;
+        if (best < 0 || !up_t[best].bytes) break;
+        PoolRec *p = up_t[best].r;
+        rt_log("mem: mirror upload source: pool %#llx+%#llx flags %#x: %.2f MiB per submission",
+               (unsigned long long)p->lo, (unsigned long long)p->size, p->flags, up_t[best].bytes / n / 1048576.0);
+        up_t[best].bytes = 0;
+    }
+    memset(up_t, 0, sizeof up_t);
+    subs0 = msub;
+}
+
 // Replay thread, the first access of this submission: queues the copies of the pages written since the last sync.
 static void mirror_sync(PoolRec *r) {
     uint64_t t0 = qpc();
+    uint64_t queued = 0;
     r->acc_sub = msub;
     uint64_t lo = r->import_lo, hi = r->import_hi;
     uint64_t r0 = lo >> SNAP_SHIFT, r1 = (hi - 1) >> SNAP_SHIFT;
@@ -1675,9 +1750,11 @@ static void mirror_sync(PoolRec *r) {
         if (b > hi) b = hi;
         const uint32_t *ch = gen_chunk[a >> GEN_CHUNK_SHIFT];   // a 2 MiB region lies in one chunk
         if (!ch) continue;
-        for (uint64_t x = a; x < b; x += 1ull << GEN_PAGE_SHIFT)
-            if (ch[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)] > since)
-                range_add(&pend, &npend, &cpend, r, x - lo, 1ull << GEN_PAGE_SHIFT);
+        for (uint64_t x = a; x < b; x += 1ull << GEN_PAGE_SHIFT) {
+            uint32_t pg = ch[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)];
+            if (pg > since && gpu_gen[pg & (GPU_GEN_N - 1)] != pg)   // not a GPU write the mirror made (vk_gpu_written)
+                range_add(&pend, &npend, &cpend, r, x - lo, 1ull << GEN_PAGE_SHIFT), queued += 1ull << GEN_PAGE_SHIFT;
+        }
     }
     r->mgen = gen_now;
     if (excl) plat_mutex_unlock(&gen_lock);
@@ -1689,8 +1766,9 @@ static void mirror_sync(PoolRec *r) {
         plat_mutex_unlock(&flush_lock);
         a = a > lo ? a & ~0xfffull : lo;
         b = b < hi ? (b + 0xfff) & ~0xfffull : hi;
-        if (a < b) range_add(&pend, &npend, &cpend, r, a - lo, b - a);
+        if (a < b) range_add(&pend, &npend, &cpend, r, a - lo, b - a), queued += b - a;
     }
+    up_tally(r, queued);
     mrep.syncs++;
     mrep.sync_t += qpc() - t0;
 }
@@ -1718,9 +1796,203 @@ int vk_mem_mirror_probe(uint64_t addr) {
     return ((PoolRec *)sp.pool)->mstate == MS_ON;
 }
 
+// ---- write-back by difference
+// A storage binding of unknown size reaches the end of its pool (vk_exec_draw.c ssbo_info), and a GPU write into a
+// mirror goes back to guest memory whole at the end of the submission. Splatoon Raiders binds a 53 MiB span that way
+// for a one-thread compute shader writing a few records each frame: 53 MiB over the bus every frame, 10 to 18 ms of GPU
+// time. A written span of DIFF_MIN or more bound outside a render pass (vk_mem_snap_cb, a dispatch) is instead copied
+// into a device-local snapshot before the shader runs; at the end of the submission shaders/mirror_diff.comp compares
+// the mirror with the snapshot and stores only the changed words into guest memory. Spans bound later in the same
+// submission inside one already snapshotted need nothing more: that snapshot predates their writes too.
+// DKB_MIRROR_DIFF=0 turns it off.
+#define DIFF_MIN (8ull << 20)   // below it a span is usually rewritten whole: the copy engine moves it faster
+static uint64_t diff_min = DIFF_MIN;   // DKB_MIRROR_DIFF_MIN=<KiB> overrides it
+#define DIFF_MAX 32
+_Thread_local VkCommandBuffer vk_mem_snap_cb;   // replay: the command buffer a written storage binding outside a pass is recorded in
+int vk_mem_diff_ran;              // replay: mirror_end recorded a diff dispatch (the compute bindings changed)
+typedef struct { PoolRec *r; uint64_t off, size, soff; } DRange;
+typedef struct { VkBuffer b; VmaAllocation a; } DOld;
+static DRange dranges[DIFF_MAX];
+static int ndiff;
+static struct {
+    int state;   // 0 not tried, 1 on, -1 off
+    PFN_vkCmdPushDescriptorSetKHR push;
+    VkDescriptorSetLayout dsl;
+    VkPipelineLayout layout;
+    VkPipeline pipe;
+    VkBuffer sbuf;
+    VmaAllocation salloc;
+    uint64_t scap, sused;
+    DOld old;    // a snapshot buffer outgrown in this submission, freed when it retires
+} D;
+
+static int diff_init(void) {
+    if (D.state) return D.state > 0;
+    D.state = -1;
+    const char *e = getenv("DKB_MIRROR_DIFF");
+    if (e && !strcmp(e, "0")) return 0;
+    VkCtx *c = vk_ctx();
+    D.push = (PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr(c->device, "vkCmdPushDescriptorSetKHR");
+    VkDescriptorSetLayoutBinding b[3];
+    for (uint32_t i = 0; i < 3; i++)
+        b[i] = (VkDescriptorSetLayoutBinding){.binding = i, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                              .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT};
+    VkDescriptorSetLayoutCreateInfo dci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+                                           .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
+                                           .bindingCount = 3, .pBindings = b};
+    VkPushConstantRange pr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, 8};
+    VkPipelineLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1,
+                                     .pSetLayouts = &D.dsl, .pushConstantRangeCount = 1, .pPushConstantRanges = &pr};
+    VkShaderModuleCreateInfo mi = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = sizeof mirror_diff_spv,
+                                   .pCode = mirror_diff_spv};
+    VkShaderModule m = VK_NULL_HANDLE;
+    if (!D.push || vkCreateDescriptorSetLayout(c->device, &dci, NULL, &D.dsl) != VK_SUCCESS ||
+        vkCreatePipelineLayout(c->device, &li, NULL, &D.layout) != VK_SUCCESS ||
+        vkCreateShaderModule(c->device, &mi, NULL, &m) != VK_SUCCESS) {
+        rt_log("mem: write-back by difference off: its pipeline could not be created");
+        return 0;
+    }
+    VkComputePipelineCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+                                      .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                                .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = m, .pName = "main"},
+                                      .layout = D.layout};
+    VkResult r = vkCreateComputePipelines(c->device, VK_NULL_HANDLE, 1, &ci, NULL, &D.pipe);
+    vkDestroyShaderModule(c->device, m, NULL);
+    if (r != VK_SUCCESS) {
+        rt_log("mem: write-back by difference off: its pipeline could not be created");
+        return 0;
+    }
+    rt_log("mem: write-back by difference on: written spans of %llu KiB or more bound by a dispatch go back word by word",
+           (unsigned long long)(diff_min >> 10));
+    D.state = 1;
+    return 1;
+}
+
+// 1 when [off, off+size) of r's mirror is covered by a snapshot of this submission (taken now if needed).
+static int diff_snap(VkCommandBuffer cb, PoolRec *r, uint64_t off, uint64_t size) {
+    if (!diff_init() || r->mstate != MS_ON || !r->buf || !r->mbuf) return 0;
+    uint64_t lim = r->import_hi - r->import_lo, lo = off & ~15ull, hi = (off + size + 15) & ~15ull;
+    if (hi > lim) hi = lim;
+    if (lo >= hi) return 0;
+    for (int i = 0; i < ndiff; i++)
+        if (dranges[i].r == r && lo >= dranges[i].off && hi <= dranges[i].off + dranges[i].size) return 1;
+    if (ndiff == DIFF_MAX) return 0;
+    uint64_t n = hi - lo, soff = (D.sused + 255) & ~255ull;
+    if (soff + n > D.scap) {
+        if (ndiff || D.old.b) return 0;   // entries already point into the current buffer
+        uint64_t need = n, step = 16ull << 20;
+        uint64_t cap = need < (64ull << 20) ? (64ull << 20) : (need + step - 1) & ~(step - 1);
+        VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = cap,
+                                 .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
+        VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+        VkBuffer nb;
+        VmaAllocation na;
+        if (vmaCreateBuffer(vk_ctx()->vma, &bi, &ai, &nb, &na, NULL) != VK_SUCCESS) return 0;
+        D.old = (DOld){D.sbuf, D.salloc};
+        D.sbuf = nb, D.salloc = na, D.scap = cap, soff = 0;
+    }
+    D.sused = soff + n;
+    mbarrier(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
+             VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    VkBufferCopy cp = {lo, soff, n};
+    vkCmdCopyBuffer(cb, r->mbuf, D.sbuf, 1, &cp);
+    mbarrier(cb, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+             VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+    dranges[ndiff++] = (DRange){r, lo, n, soff};
+    return 1;
+}
+
+static void diff_free(void *arg) {   // completion thread
+    DOld *o = arg;
+    vmaDestroyBuffer(vk_ctx()->vma, o->b, o->a);
+    free(o);
+}
+
+// mirror_end: the diff dispatches, after which guest memory is ready for the host and for later submissions.
+static int diff_run(VkCommandBuffer cb, uint64_t fence) {
+    int rec = 0;
+    if (ndiff) {
+        VkCtx *c = vk_ctx();
+        uint64_t al = c->props.limits.minStorageBufferOffsetAlignment;
+        if (al < 16) al = 16;
+        mbarrier(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
+                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT);
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, D.pipe);
+        // named in the GPU fault reports (DKB_GPU_CHECKPOINTS=1, TOTK_CRUMB_BIND=1) as "MIRRDIFF"
+        if (vk_ctx()->has_nv_checkpoints && vk_checkpoints_on())
+            vk_checkpoint_note(D.pipe, 0x4d49525244494646ull, 0, 0), rec_checkpoint(cb, D.pipe);
+        if (vk_crumb_bind_on()) rec_crumb(cb, VK_CRUMB_BIND, vk_crumb_bind_note(D.pipe, 0x4d49525244494646ull, 0, 0));
+        for (int i = 0; i < ndiff; i++) {
+            const DRange *d = &dranges[i];
+            if (!d->r->buf || !d->r->mbuf || d->r->mstate != MS_ON) {   // gone meanwhile: nothing safe to write
+                static volatile int32_t logged;
+                if (plat_inc32(&logged) <= 8) rt_log("mem: write-back by difference skipped a pool without its buffers");
+                continue;
+            }
+            uint64_t b0 = d->off & ~(al - 1), delta = d->off - b0;
+            VkDescriptorBufferInfo bm = {d->r->mbuf, b0, delta + d->size}, bs = {D.sbuf, d->soff, d->size},
+                                   bg = {d->r->buf, b0, delta + d->size};
+            const VkDescriptorBufferInfo *bi[3] = {&bm, &bs, &bg};
+            VkWriteDescriptorSet w[3];
+            for (uint32_t k = 0; k < 3; k++)
+                w[k] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = k,
+                                              .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                              .pBufferInfo = bi[k]};
+            // Through the recorder (vk_rec.h): cb is a replay part, whose commands the recorder thread makes in call
+            // order. A direct call wrote into the command buffer while the recorder was still making the commands
+            // queued before it, and the GPU then read corrupt descriptors (a read invalid at an address no buffer ever
+            // had, in this dispatch, on entering gameplay).
+            rec_push(D.push, cb, VK_PIPELINE_BIND_POINT_COMPUTE, D.layout, 0, 3, w);
+            uint32_t pc[2] = {(uint32_t)(delta / 16), (uint32_t)(d->size / 16)};
+            vkCmdPushConstants(cb, D.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, pc);
+            uint64_t groups = ((uint64_t)pc[1] + 255) / 256;
+            vkCmdDispatch(cb, (uint32_t)(groups > 4096 ? 4096 : groups ? groups : 1), 1, 1);
+            d->r->wb_sub = msub;
+            rec += 3;
+        }
+        mbarrier(cb, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT,
+                 VK_PIPELINE_STAGE_2_HOST_BIT | VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                 VK_ACCESS_2_HOST_READ_BIT | VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+        ndiff = 0, D.sused = 0, vk_mem_diff_ran = 1;
+        rec += 3;
+    }
+    if (D.old.b) {
+        DOld *o = malloc(sizeof *o);
+        if (o) *o = D.old, vk_completion_add(fence, diff_free, o);
+        D.old = (DOld){0};
+    }
+    return rec;
+}
+
+// Diagnostic: the bytes queued for write-back in the open submission, by the code that queued them (its return
+// address and vk_mem_wb_tag, the shader a storage binding belongs to). Logged when one submission writes back 8 MiB
+// or more, so a large write-back names its source.
+uint64_t vk_mem_wb_tag;
+typedef struct { uint64_t at, tag, bytes, n; } WbTally;
+static WbTally wb_t[32];
+static void wb_tally(uint64_t at, uint64_t size) {
+    for (int i = 0; i < 32; i++) {
+        WbTally *t = &wb_t[i];
+        if (!t->n) t->at = at, t->tag = vk_mem_wb_tag;
+        if (t->at == at && t->tag == vk_mem_wb_tag) { t->bytes += size, t->n++; return; }
+    }
+}
+static int wb_by_bytes(const void *x, const void *y) {
+    const WbTally *a = x, *b = y;
+    return a->bytes < b->bytes ? 1 : a->bytes > b->bytes ? -1 : 0;
+}
+
 void vk_mem_gpu_wrote(const VkMemSpan *sp, uint64_t size) {
     PoolRec *r = sp->pool;
     if (!r || r->mstate != MS_ON || sp->buffer != r->mbuf || !size) return;
+    wb_tally((uint64_t)(uintptr_t)__builtin_return_address(0), size);
+    static int dm_init;
+    if (!dm_init) {
+        dm_init = 1;
+        const char *e = getenv("DKB_MIRROR_DIFF_MIN");
+        if (e) diff_min = strtoull(e, NULL, 0) << 10;
+    }
+    if (vk_mem_snap_cb && size >= diff_min && diff_snap(vk_mem_snap_cb, r, sp->offset, size)) return;
     range_add(&wbl, &nwbl, &cwbl, r, sp->offset, size);
 }
 
@@ -1799,11 +2071,142 @@ void vk_mem_mirror_begin(void) {
 
 int vk_mem_mirror_pending(void) { return npend; }
 
-void vk_mem_mirror_prologue(VkCommandBuffer cb) {
+// Staged mirror uploads. A prologue copy straight from the imported pool reads guest memory when the GPU runs it, up
+// to a frame after the submit call; Splatoon Raiders writes the next frame's data right after its present, so those
+// bytes reached the mirror of the frame still drawing (the flicker nvn_api_core.c nvn_submit_wait_mode describes).
+// The pages of imported pools are instead copied by the CPU at record time, while the submit call still holds the
+// game, into a host buffer the copy then reads; it lives until the part's fence. Shadow-storage pools need nothing:
+// their buffer is already the CPU's copy (vk_mem_shadow_sync). A prologue stages at most STG_MAX (a new pool's first
+// whole copy goes straight). DKB_MIRROR_STAGE=0 turns it off.
+#define STG_CHUNK (4ull << 20)
+#define STG_MAX (8ull << 20)    // a pool's first whole copy is larger: memcpy of it would stall the replay
+#define STG_SPARE 8
+typedef struct { VkBuffer b; VmaAllocation a; uint8_t *map; uint64_t size; } StgBuf;
+static StgBuf stg_spare[STG_SPARE];
+static int nstg_spare;
+static PlatMutex stg_lock = PLAT_MUTEX_INIT;
+
+int vk_mem_stage_on(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("DKB_MIRROR_STAGE");
+        on = !(e && !strcmp(e, "0"));
+        rt_log("mem: mirror uploads %s (DKB_MIRROR_STAGE)",
+               on ? "copied by the CPU at record time" : "read from guest memory when the GPU runs them");
+    }
+    return on;
+}
+
+static void stg_done(void *p) {
+    StgBuf *s = p;
+    plat_mutex_lock(&stg_lock);
+    if (nstg_spare < STG_SPARE) stg_spare[nstg_spare++] = *s, s->b = VK_NULL_HANDLE;
+    else {   // full: keep the larger buffers
+        int k = 0;
+        for (int i = 1; i < STG_SPARE; i++)
+            if (stg_spare[i].size < stg_spare[k].size) k = i;
+        if (stg_spare[k].size < s->size) {
+            StgBuf t = stg_spare[k];
+            stg_spare[k] = *s, *s = t;
+        }
+    }
+    plat_mutex_unlock(&stg_lock);
+    if (s->b) vmaDestroyBuffer(vk_ctx()->vma, s->b, s->a);
+    free(s);
+}
+
+static StgBuf *stg_get(uint64_t size) {
+    StgBuf *s = malloc(sizeof *s);
+    if (!s) return NULL;
+    plat_mutex_lock(&stg_lock);
+    int best = -1;
+    for (int i = 0; i < nstg_spare; i++)
+        if (stg_spare[i].size >= size && (best < 0 || stg_spare[i].size < stg_spare[best].size)) best = i;
+    if (best >= 0) {
+        *s = stg_spare[best];
+        stg_spare[best] = stg_spare[--nstg_spare];
+        plat_mutex_unlock(&stg_lock);
+        return s;
+    }
+    plat_mutex_unlock(&stg_lock);
+    size = (size + STG_CHUNK - 1) & ~(STG_CHUNK - 1);
+    VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size,
+                             .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
+    VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+                                  .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                                           VMA_ALLOCATION_CREATE_MAPPED_BIT};
+    VmaAllocationInfo info;
+    if (vmaCreateBuffer(vk_ctx()->vma, &bi, &ai, &s->b, &s->a, &info) != VK_SUCCESS) {
+        free(s);
+        return NULL;
+    }
+    s->map = info.pMappedData, s->size = size;
+    return s;
+}
+
+// Records the staged copies of pend's imported-pool ranges (sorted and merged as copy_ranges does) and moves the
+// ranges it did not stage to the front; returns their number.
+static int stage_ranges(VkCommandBuffer cb, uint64_t fence) {
+    qsort(pend, (size_t)npend, sizeof *pend, range_cmp);
+    uint64_t total = 0;
+    for (int i = 0; i < npend; i++) {
+        PoolRec *r = pend[i].r;
+        if (r->smap || pend[i].size > STG_MAX) continue;
+        uint64_t lim = r->import_hi - r->import_lo, hi = pend[i].off + pend[i].size;
+        if (hi > lim) hi = lim;
+        if (pend[i].off < hi && total + (hi - pend[i].off) <= STG_MAX) total += hi - pend[i].off;
+    }
+    if (!total) return npend;
+    StgBuf *s = stg_get(total);
+    if (!s) return npend;
+    uint64_t used = 0;
+    int left = 0;
+    for (int i = 0; i < npend;) {
+        PoolRec *r = pend[i].r;
+        uint64_t lim = r->import_hi - r->import_lo;
+        int k = 0;
+        for (; i < npend && pend[i].r == r; i++) {
+            uint64_t lo = pend[i].off, hi = pend[i].off + pend[i].size;
+            if (hi > lim) hi = lim;
+            if (lo >= hi) continue;
+            if (r->smap || pend[i].size > STG_MAX) {
+                pend[left++] = pend[i];
+                continue;
+            }
+            if (k && lo < mregions[k - 1].dstOffset + mregions[k - 1].size) {   // overlaps the previous: its tail only
+                uint64_t end = mregions[k - 1].dstOffset + mregions[k - 1].size;
+                if (hi <= end) continue;
+                lo = end;
+            }
+            if (used + (hi - lo) > s->size) {
+                pend[left++] = (MRange){r, lo, hi - lo};
+                continue;
+            }
+            memcpy(s->map + used, (const uint8_t *)(uintptr_t)r->import_lo + lo, hi - lo);
+            if (k && mregions[k - 1].dstOffset + mregions[k - 1].size == lo &&
+                mregions[k - 1].srcOffset + mregions[k - 1].size == used)
+                mregions[k - 1].size += hi - lo;
+            else {
+                if (k == cregions) grow((void **)&mregions, &cregions, sizeof *mregions);
+                mregions[k++] = (VkBufferCopy){used, lo, hi - lo};
+            }
+            used += hi - lo;
+        }
+        if (!k) continue;
+        vkCmdCopyBuffer(cb, s->b, r->mbuf, (uint32_t)k, mregions);
+        for (int j = 0; j < k; j++) mrep.upload_bytes += mregions[j].size;
+        mrep.upload_copies += (uint64_t)k;
+    }
+    vk_completion_add(fence, stg_done, s);
+    return left;
+}
+
+void vk_mem_mirror_prologue(VkCommandBuffer cb, uint64_t fence) {
     if (!npend) return;
     mbarrier(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
              VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
-    copy_ranges(cb, pend, npend, 1, &mrep.upload_bytes, &mrep.upload_copies);
+    int n = vk_mem_stage_on() ? stage_ranges(cb, fence) : npend;
+    if (n) copy_ranges(cb, pend, n, 1, &mrep.upload_bytes, &mrep.upload_copies);
     mbarrier(cb, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
              VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
     npend = 0;
@@ -1907,12 +2310,29 @@ int vk_mem_mirror_end(VkCommandBuffer cb, uint64_t fence) {
                  VK_ACCESS_2_TRANSFER_READ_BIT);
         for (int i = 0; i < nwbl; i++) wbl[i].r->wb_sub = msub;
         mrep.wb_ranges += (uint64_t)nwbl;
+        uint64_t wb0 = mrep.wb_bytes;
         rec += copy_ranges(cb, wbl, nwbl, 0, &mrep.wb_bytes, &mrep.wb_copies) + 2;
+        if (mrep.wb_bytes - wb0 >= (8ull << 20)) {   // diagnostic: a large write-back in one submission
+            static volatile int32_t logged;
+            if (plat_inc32(&logged) <= 12) {
+                rt_log("mem: submission %u writes back %.1f MiB in %d ranges; queued (before merging) by:", msub,
+                       (mrep.wb_bytes - wb0) / 1048576.0, nwbl);
+                qsort(wb_t, 32, sizeof *wb_t, wb_by_bytes);
+                for (int i = 0; i < 8 && wb_t[i].n; i++) {
+                    char buf[160];
+                    rt_log("mem:   %.1f MiB in %llu writes from %s, shader %016llx", wb_t[i].bytes / 1048576.0,
+                           (unsigned long long)wb_t[i].n, plat_addr_describe(wb_t[i].at, buf, sizeof buf),
+                           (unsigned long long)wb_t[i].tag);
+                }
+            }
+        }
+        memset(wb_t, 0, sizeof wb_t);
         mbarrier(cb, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_HOST_BIT | VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                  VK_ACCESS_2_HOST_READ_BIT | VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
         nwbl = 0;
     }
+    rec += diff_run(cb, fence);
     if (mirror_verify) rec += verify_record(cb, fence);
     plat_mutex_lock(&mirror_stat_lock);
     uint64_t *d = (uint64_t *)&macc, *s = (uint64_t *)&mrep;

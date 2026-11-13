@@ -68,6 +68,13 @@ Lowered *lower(const uint8_t *control, const uint8_t *code) {
             if (!known && seen.size() < 256) {
                 seen.push_back({w[0], w[1], w[2], w[3]});
                 rt_log("nvn2: failing instruction words %08x %08x %08x %08x (opcode %#x)", w[0], w[1], w[2], w[3], w[0] & 0xfff);
+                // The instructions around it (a CALL's linkage is set up by the ones before), and the stage kind.
+                rt_log("nvn2:   %s stage, %zu instructions", gfx ? "graphics" : "compute", native.size());
+                for (size_t k = at >= 4 ? at - 4 : 0; k < native.size() && k <= at + 2; k++) {
+                    const auto &x = native[k].words;
+                    rt_log("nvn2:   %c [%zu] %08x %08x %08x %08x (opcode %#x)", k == at ? '>' : ' ', k, x[0], x[1], x[2],
+                           x[3], x[0] & 0xfff);
+                }
             }
         }
         return nullptr;

@@ -2,4 +2,8 @@
    the installer window). tools/build_game.py compiles it with the runtime objects, so it is also a member of
    libtotkrt.a, which the release links with --whole-archive. */
 1 24 "totk.manifest"
+#ifdef GAME_ICON   /* tools/build_game.py defines it when the build folder holds a game.ico */
+1 ICON "game.ico"
+#else
 1 ICON "dkb.ico"
+#endif

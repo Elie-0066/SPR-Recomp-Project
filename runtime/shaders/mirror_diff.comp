@@ -1,0 +1,24 @@
+#version 450
+// Mirror write-back by difference (runtime/vk_memory.c, "write-back by difference"): a range of a pool's VRAM mirror
+// that a shader may have written, compared with the snapshot taken before the shader ran. Only the 16-byte blocks that
+// changed go to the imported guest memory, so a storage binding that reaches the end of a large pool while the shader
+// writes a few records no longer sends the whole span over the bus every submission.
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly buffer Mirror { uvec4 m[]; };
+layout(std430, binding = 1) readonly buffer Snapshot { uvec4 s[]; };
+layout(std430, binding = 2) writeonly buffer Guest { uvec4 g[]; };
+layout(push_constant) uniform P {
+    uint base;    // the range's first 16-byte block in the mirror and guest bindings
+    uint count;   // its length in 16-byte blocks; the snapshot binding starts at the range
+} pc;
+
+void main() {
+    uint stride = gl_NumWorkGroups.x * 256u;
+    for (uint i = gl_GlobalInvocationID.x; i < pc.count; i += stride) {
+        uvec4 a = m[pc.base + i], b = s[i];
+        if (a == b) continue;
+        // The whole 16-byte block: neighbouring threads then store whole lines, which the bus moves far faster than
+        // single words. Its unchanged words still hold the snapshot's (the guest's) values.
+        g[pc.base + i] = a;
+    }
+}

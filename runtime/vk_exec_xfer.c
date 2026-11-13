@@ -81,10 +81,16 @@ static void note_gpu_write(VkExec *ex, uint64_t addr, uint64_t size) {
     vk_completion_add(ex->fence, guest_written_cb, r);
 }
 
-typedef struct { volatile uint32_t *val; uint32_t mode, value; } EventWrite;
+typedef struct { volatile uint32_t *val; uint32_t mode, value; uint64_t t0, fence; } EventWrite;   // t0: when recorded
 
 static void event_cb(void *arg) {
     EventWrite *e = arg;
+    // Bring-up: the game polls this event to pace its frames; report a GPU-side signal that comes long after it was recorded.
+    static volatile int32_t late_logs;
+    uint64_t lag = kern_now_ns() - e->t0;
+    if (lag > 30000000ull && __atomic_fetch_add(&late_logs, 1, __ATOMIC_RELAXED) < 20)
+        rt_log("vk: an event signal of submission %llu completed %.1f ms after it was recorded", (unsigned long long)e->fence,
+               lag / 1e6);
     if (e->mode == NVN_EVENT_SIGNAL_MODE_ADD) __atomic_fetch_add(e->val, e->value, __ATOMIC_RELEASE);
     else __atomic_store_n(e->val, e->value, __ATOMIC_RELEASE);
     free(e);
@@ -280,7 +286,7 @@ static void oq_report(VkExec *ex, uint64_t addr) {
 static void signal_event(VkExec *ex, const p_signal_event *p) {
     EventWrite *e = malloc(sizeof *e);
     if (!e) rt_fatal("vk: out of memory");
-    *e = (EventWrite){p->val, p->mode, p->value};
+    *e = (EventWrite){p->val, p->mode, p->value, kern_now_ns(), ex->fence};
     vk_completion_add(ex->fence, event_cb, e);
 }
 

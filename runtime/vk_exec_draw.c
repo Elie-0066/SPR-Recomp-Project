@@ -29,6 +29,7 @@
 #include "nvn_indirect_reset.h"
 #include "vk.h"
 #include "vk_exec.h"
+#include "raiders_upscale_spv.h"
 #include "platform/platform.h"
 
 #define MAX_BINDINGS 128
@@ -1110,6 +1111,10 @@ static void limits_init(void) {
     __atomic_store_n(&LIM.ubo_max, l->maxUniformBufferRange, __ATOMIC_RELEASE);
 }
 
+static int ub_shadow(VkExec *ex, uint64_t addr, uint64_t n, VkDescriptorBufferInfo *out);
+static uint32_t ubo_read_cur;   // bind_resources: the binding's VkPipeBinding.ubo_read while ubo_info runs for it
+static uint64_t ub_gen;   // bumped by every uniform update: the bound blocks change (resource-set memo key)
+
 static VkDescriptorBufferInfo ubo_info(VkExec *ex, int st, int slot) {
     if (!__atomic_load_n(&LIM.ubo_max, __ATOMIC_ACQUIRE)) limits_init();
     uint64_t max = LIM.ubo_max, align = LIM.ubo_align;
@@ -1152,6 +1157,12 @@ static VkDescriptorBufferInfo ubo_info(VkExec *ex, int st, int slot) {
         return (VkDescriptorBufferInfo){b, o, sizeof blk};
     } else if (slot >= 3 && slot - 3 < 18) {
         const p_bind_buf *b = &ex->ubo[st][slot - 3];
+        uint64_t un = b->size < max ? b->size : max;
+        if (ubo_read_cur && ubo_read_cur < un) un = ubo_read_cur;   // the part the shader can read
+        if (b->size && ub_shadow(ex, b->addr, un, &bi)) {   // updated in this submission
+            count_use(VK_MCLS_SCRATCH, VK_MUSE_UBO, bi.range);
+            return bi;
+        }
         if (b->size && vk_usnap_find(b->addr, b->size < max ? b->size : max, align, &bi)) {   // as of the submit call
             count_use(VK_MCLS_SCRATCH, VK_MUSE_UBO, bi.range);
             return bi;
@@ -1201,9 +1212,167 @@ static struct {
     struct { uint64_t lo, hi; const uint8_t *data; } u[UPD_N];
 } UPD;
 
+// Deferred uniform updates (Splatoon Raiders issues about 1,250 per frame). NVN applies UpdateUniformBuffer in
+// command order: the draws after it read the new bytes, the ones before it the old. Written in place, every update
+// ends the render pass, drains the GPU with a full barrier, copies and starts the pass again (4-5 ms of GPU time per
+// frame in gameplay). Instead an update whose block has a snapshot (vk_usnap.c, the block as of the submit call) is
+// only noted: a uniform binding that overlaps updates of this submission gets a transient copy of the block, the
+// snapshot with every update so far applied in order (ub_shadow), and the copies into the block's memory are recorded
+// where the replay leaves a render pass anyway (vk_exec_ub_flush, from vk_exec.c barrier_to), so guest memory,
+// storage reads after that point and later submissions see them. An update without a snapshot takes the old path,
+// after the deferred ones are flushed. Storage or vertex reads of an updated block inside the same pass still see
+// the bytes from before the update. DKB_UB_DEFER=0 turns the deferral off.
+static struct {
+    uint64_t fence;
+    uint32_t flushed;                    // UPD entries before it are in memory (or were never deferred)
+    uint32_t pending;                    // deferred entries not yet flushed
+    uint8_t deferred[UPD_N];             // per UPD entry (index % UPD_N)
+    uint64_t lo, hi;                     // bounds of every update of the submission
+    uint64_t chunks[16];                 // 1024-bit hash of the 256-byte chunks the updates touched
+} UBD;
+
+static int ub_defer_on(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("DKB_UB_DEFER");
+        on = !(e && !strcmp(e, "0"));
+        rt_log("vk_exec: uniform updates %s (DKB_UB_DEFER)",
+               on ? "deferred to the next pass break, updated blocks bound as transient copies"
+                  : "written in place behind full barriers");
+    }
+    return on;
+}
+
+static unsigned ub_chunk(uint64_t a) { return (unsigned)((a >> 8) * 0x9e3779b97f4a7c15ull >> 54); }
+
 static void upd_note(const VkExec *ex, const p_update_ub *u) {
     if (UPD.fence != ex->fence) UPD.fence = ex->fence, UPD.n = 0;
+    if (UBD.fence != ex->fence) {
+        UBD.fence = ex->fence, UBD.flushed = UBD.pending = 0, UBD.lo = UINT64_MAX, UBD.hi = 0;
+        memset(UBD.chunks, 0, sizeof UBD.chunks);
+    }
+    UBD.deferred[UPD.n % UPD_N] = 0;
     UPD.u[UPD.n++ % UPD_N] = (typeof(UPD.u[0])){u->dst, u->dst + u->size, u->data};
+    if (u->dst < UBD.lo) UBD.lo = u->dst;
+    if (u->dst + u->size > UBD.hi) UBD.hi = u->dst + u->size;
+    for (uint64_t c = u->dst & ~255ull; c < u->dst + u->size; c += 256)
+        UBD.chunks[ub_chunk(c) >> 6] |= 1ull << (ub_chunk(c) & 63);
+    ub_gen++;
+}
+
+// Transient copies of updated blocks built in this submission: a block updated before every draw is rebuilt from its
+// previous copy plus the newer updates only.
+#define UBS_N 32
+#define UBS_MAX (64u << 10)
+static struct {
+    uint64_t fence, addr, n;
+    uint32_t upto;                       // UPD entries applied
+    uint8_t *cpu;                        // the bytes (UBS_MAX)
+    VkBuffer b;
+    VkDeviceSize o;
+    VkCommandBuffer cb;                  // the command buffer the transient copy was made for
+} UBS[UBS_N];
+static unsigned ubs_next;
+
+static int ub_shadow(VkExec *ex, uint64_t addr, uint64_t n, VkDescriptorBufferInfo *out) {
+    if (UBD.fence != ex->fence || UPD.fence != ex->fence || !UPD.n || UPD.n > UPD_N || addr >= UBD.hi ||
+        addr + n <= UBD.lo || n > UBS_MAX)
+        return 0;
+    int hit = 0;
+    for (uint64_t c = addr & ~255ull; c < addr + n && !hit; c += 256)
+        hit = UBD.chunks[ub_chunk(c) >> 6] >> (ub_chunk(c) & 63) & 1;
+    if (!hit) return 0;
+    int k = -1;
+    for (int i = 0; i < UBS_N; i++)
+        if (UBS[i].fence == ex->fence && UBS[i].addr == addr && UBS[i].n == n && UBS[i].cpu) {
+            k = i;
+            break;
+        }
+    uint32_t from = 0;
+    if (k >= 0) {
+        if (UBS[k].upto == UPD.n && UBS[k].cb == ex->cb) {
+            *out = (VkDescriptorBufferInfo){UBS[k].b, UBS[k].o, n};
+            RS.volatile_ = 1;
+            return 1;
+        }
+        from = UBS[k].upto;
+    } else {
+        int any = 0;   // no update overlaps: the block is as in memory (or its snapshot)
+        for (uint32_t i = 0; i < UPD.n && !any; i++) any = UPD.u[i].lo < addr + n && UPD.u[i].hi > addr;
+        if (!any) return 0;
+        const void *base = vk_usnap_bytes(addr, n);
+        if (!base) {
+            // No snapshot of the whole block: the updates apply over guest memory's copy, the block as the CPU
+            // last wrote it.
+            static int warned;
+            if (!warned++)
+                rt_log("vk_exec: an updated uniform block %#llx+%#llx has no snapshot; its copy starts from guest memory",
+                       (unsigned long long)addr, (unsigned long long)n);
+            VkMemSpan sp;
+            if (!vk_mem_resolve(addr, n, &sp) || sp.alloc) return 0;
+            base = (const void *)(uintptr_t)addr;
+        }
+        k = (int)(ubs_next++ % UBS_N);
+        if (!UBS[k].cpu && !(UBS[k].cpu = malloc(UBS_MAX))) rt_fatal("vk: out of memory");
+        memcpy(UBS[k].cpu, base, n);
+        UBS[k].fence = ex->fence, UBS[k].addr = addr, UBS[k].n = n;
+    }
+    for (uint32_t i = from; i < UPD.n; i++) {
+        const typeof(UPD.u[0]) *e = &UPD.u[i];
+        if (e->lo >= addr + n || e->hi <= addr) continue;
+        uint64_t lo = e->lo > addr ? e->lo : addr, hi = e->hi < addr + n ? e->hi : addr + n;
+        memcpy(UBS[k].cpu + (lo - addr), e->data + (lo - e->lo), hi - lo);
+    }
+    UBS[k].upto = UPD.n;
+    {   // diagnostic: transient copies and their bytes, logged every 20,000 (the first three times)
+        static uint64_t builds, bytes, logs;
+        builds++, bytes += n;
+        if (builds == 20000 && logs < 3) {
+            rt_log("vk_exec: updated uniform blocks: %llu transient copies, %.1f KiB each on average (last %#llx+%#llx)",
+                   (unsigned long long)builds, bytes / 1024.0 / builds, (unsigned long long)addr, (unsigned long long)n);
+            builds = bytes = 0, logs++;
+        }
+    }
+    memcpy(scratch(ex, n, &UBS[k].b, &UBS[k].o), UBS[k].cpu, n);
+    UBS[k].cb = ex->cb;
+    RS.volatile_ = 1;
+    *out = (VkDescriptorBufferInfo){UBS[k].b, UBS[k].o, n};
+    return 1;
+}
+
+// The deferred updates into memory, in order (vk_exec.c barrier_to, outside a pass). Records a barrier after the
+// earlier draws, then the copies; barrier_to's own full barrier follows them.
+void vk_exec_ub_flush(VkExec *ex) {
+    if (!UBD.pending || UBD.fence != ex->fence || UPD.fence != ex->fence) return;
+    VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                           .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                           .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+                           .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                           .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT};
+    VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
+    vkCmdPipelineBarrier2(ex->cb, &di);   // earlier draws are done with the old contents
+    for (uint32_t i = UBD.flushed; i < UPD.n; i++) {
+        if (!UBD.deferred[i % UPD_N]) continue;
+        UBD.deferred[i % UPD_N] = 0;
+        const typeof(UPD.u[0]) *e = &UPD.u[i % UPD_N];
+        uint64_t size = e->hi - e->lo;
+        VkMemSpan sp;
+        if (!vk_mem_resolve(e->lo, size, &sp)) continue;
+        VkBuffer b;
+        VkDeviceSize o;
+        memcpy(scratch(ex, size, &b, &o), e->data, size);
+        VK_MEM_PICK(sp);
+        VkBufferCopy cp = {o, sp.offset, size};
+        vkCmdCopyBuffer(ex->cb, b, sp.buffer, 1, &cp);
+        vk_mem_gpu_wrote(&sp, size);
+        // Past the ring ub_shadow no longer sees the updates: the snapshot of the block must not be bound then.
+        if (UPD.n >= UPD_N - 1) vk_usnap_drop(e->lo, size);
+        else vk_usnap_note_write(e->lo, size);
+        vk_mem_count(sp.cls, VK_MUSE_GPU_WRITE, size);
+        note_written(ex, e->lo, size);
+    }
+    ex->recorded++;
+    UBD.flushed = UPD.n, UBD.pending = 0;
 }
 
 // 1 when an update of this submission supplied [a, a+n).
@@ -1270,6 +1439,9 @@ static p_bind_buf guarded_storage_binding(const VkExec *ex, int st, const GfxSha
     return b;
 }
 
+extern uint64_t vk_mem_wb_tag;   // vk_memory.c
+extern _Thread_local VkCommandBuffer vk_mem_snap_cb;   // vk_memory.c
+
 static VkDescriptorBufferInfo ssbo_info(VkExec *ex, int st, const GfxShaderRes *r, int written) {
     if (!__atomic_load_n(&LIM.ubo_max, __ATOMIC_ACQUIRE)) limits_init();
     uint64_t max = LIM.sbo_max, align = LIM.sbo_align;
@@ -1285,8 +1457,17 @@ static VkDescriptorBufferInfo ssbo_info(VkExec *ex, int st, const GfxShaderRes *
     if (b) {
         // vk_caps.c: shaders translated for sbuf_align address the buffer from its address rounded down to it.
         uint64_t lead = vk_caps.sbuf_align ? b->addr & (vk_caps.sbuf_align - 1) : 0;
-        if (bind_range(ex, b->addr - lead, b->size ? b->size + lead : 0, align, max, ubo ? VK_MUSE_UBO : VK_MUSE_SSBO,
-                       written, guarded, &bi)) {
+        if (written) {   // vk_memory.c wb_tally: the write-back diagnostic names the shader
+            const uint8_t *tc, *tcode;
+            uint32_t tl;
+            vk_mem_wb_tag = ex->prog && find_stage(ex->prog, st, &tc, &tcode, &tl) ? nvn2_origin(tcode) : 0;
+        }
+        // vk_memory.c "write-back by difference": outside a pass (a dispatch) a large written span is snapshotted first
+        vk_mem_snap_cb = written && !ex->in_pass ? ex->cb : VK_NULL_HANDLE;
+        int bound = bind_range(ex, b->addr - lead, b->size ? b->size + lead : 0, align, max, ubo ? VK_MUSE_UBO : VK_MUSE_SSBO,
+                               written, guarded, &bi);
+        vk_mem_wb_tag = 0, vk_mem_snap_cb = VK_NULL_HANDLE;
+        if (bound) {
             if (written && bi.buffer != VK_NULL_HANDLE) {
                 note_written(ex, b->addr - lead, bi.range);
                 const uint8_t *ctl, *code;
@@ -1949,7 +2130,7 @@ static int bind_sig(const VkExec *ex, const VkPipeInfo *info) {
     PUT(ex->samp_pool.count);
     PUT((uint64_t)vk_texture_slots_gen() << 32 | vk_texture_epoch());
     PUT((uint64_t)vk_sampler_gen() << 32 | (uint32_t)ex->nfbl);
-    PUT(vk_mem_gen() + vk_usnap_gen());   // both only grow
+    PUT(vk_mem_gen() + vk_usnap_gen() + ub_gen);   // all only grow
     for (int i = 0; i < ex->nfbl && i < 9; i++) PUT((uintptr_t)ex->fbl_img[i]);
     if (l->sup) {
         float in[3];
@@ -2062,7 +2243,11 @@ static void bind_resources(VkExec *ex, const VkPipeInfo *info) {
             o->buffer = (VkDescriptorBufferInfo){B.sup_buf, B.sup_off, SUPPORT_BYTES};
         } else if (b->kind == GFX_RES_UBO) {
             DP_MARK(DP_SIG);   // the loop's own work since the last binding
+            static int uread_on = -1;   // DKB_UBO_READ=0: transient copies cover the whole bound range
+            if (uread_on < 0) uread_on = !(getenv("DKB_UBO_READ") && !strcmp(getenv("DKB_UBO_READ"), "0"));
+            ubo_read_cur = cnt == 1 && uread_on ? b->ubo_read : 0;
             for (uint32_t k = 0; k < cnt; k++) o[k].buffer = ubo_info(ex, st, r->slot + (int)k);
+            ubo_read_cur = 0;
             DP_MARK(DP_UBO);
         } else if (b->kind == GFX_RES_SSBO) {
             DP_MARK(DP_SIG);
@@ -2426,6 +2611,23 @@ static int light_quad_fault_skip(const VkExec *ex, const GfxShader *vs, const Gf
     return 1;
 }
 
+// Splatoon Raiders: an iterative full-screen pass (NVN 2 fragment stage 3f6af34afb0c405a) is drawn some 285 times per
+// frame into 880x880 targets in the character creator and the hub. The dumps show its colour targets entirely zero, its
+// shader kills nearly every pixel, and one submission of 64 of its draws took 107 ms on a GPU that draws the rest of the
+// frame in 5 ms: it holds the game at 18-19 fps. TOTK_RAIDERS_SKIP_880=0 draws it again.
+static int raiders_skip_880(const VkExec *ex) {
+    static int on = -1;
+    if (on < 0) {
+        on = !strcmp(rt_game_target, "raiders") && cfg_bool("TOTK_RAIDERS_SKIP_880");
+        if (on) rt_log("vk_exec: Splatoon Raiders: draws of fragment stage 3f6af34afb0c405a (285 full-screen passes per frame, "
+                       "all empty in the dumps) are skipped; TOTK_RAIDERS_SKIP_880=0 draws them");
+    }
+    if (!on || ex->pass_w != 880 || ex->pass_h != 880) return 0;
+    const uint8_t *ctl, *code = NULL;
+    uint32_t len;
+    return find_stage(ex->prog, NVN_STAGE_FS, &ctl, &code, &len) && nvn2_origin(code) == 0x3f6af34afb0c405aull;
+}
+
 // DKB_SKIP_VS / DKB_SKIP_FS (debug only, for bisecting the device loss of #75): comma-separated 16-digit hex NVN 2
 // stage origins. A draw whose vertex (fragment) stage is listed in the matching variable is skipped, so a run that
 // stops faulting names the culprit shader. Parsed once; unset costs one flag test per draw.
@@ -2683,7 +2885,7 @@ static int prepare_draw_impl(VkExec *ex, int prim, int32_t count, int restart) {
         native_gs_vs = vs, native_gs_fs = fs;
         if (gs_wait) gs = shader_for(ex, NVN_STAGE_GS, &has_gs, NULL, 1);
     }
-    if (light_quad_fault_skip(ex, vs, fs) || skip_vs_listed(ex) || skip_fs_listed(ex)) return 0;
+    if (light_quad_fault_skip(ex, vs, fs) || skip_vs_listed(ex) || skip_fs_listed(ex) || raiders_skip_880(ex)) return 0;
     DP_MARK(DP_SHADER);
     if (!vs || (has_fs && !fs) || (want_gs && (!has_gs || !gs))) return 0;
     if (!geometry_feedback_safe(ex, vs, gs)) return 0;
@@ -2801,7 +3003,19 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
 
 // TOTK_TRACE=perf: the draw or dispatch just recorded, with the NVN 2 names of its stages, for the slow-part line
 // (vk_sync.c vk_sync_note). kind: 0 draw, 1 indirect draw, 2 dispatch, 3 indirect dispatch.
+void vk_exec_gpuprof_note(VkExec *ex, uint64_t a, uint64_t b);   // vk_exec.c
+
 static void note_work(const VkExec *ex, int kind, uint64_t work) {
+    static int prof = -1;   // DKB_GPU_PROFILE: GPU time per shader pair (vk_gpuprof.c)
+    if (prof < 0) prof = getenv("DKB_GPU_PROFILE") && strcmp(getenv("DKB_GPU_PROFILE"), "0");
+    if (prof && ex->prog) {
+        const uint8_t *pc, *pcode;
+        uint32_t plen;
+        int pcs = kind >= 2;
+        uint64_t pa = find_stage(ex->prog, pcs ? NVN_STAGE_CS : NVN_STAGE_VS, &pc, &pcode, &plen) ? nvn2_origin(pcode) : 0;
+        uint64_t pb = !pcs && find_stage(ex->prog, NVN_STAGE_FS, &pc, &pcode, &plen) ? nvn2_origin(pcode) : 0;
+        vk_exec_gpuprof_note((VkExec *)ex, pa, pb);
+    }
     if (!vk_sync_noting() || !ex->prog) return;
     const uint8_t *ctl, *code;
     uint32_t len;
@@ -3043,6 +3257,108 @@ static int mvk_upscale_blit(VkExec *ex, const GfxShader *cs, int force) {
     return 1;
 }
 
+// Splatoon Raiders' upscaler network reads its input sRGB-encoded and decodes to linear colour before it stores (its
+// last instructions: x >= 0.04045 ? ((x + 0.055) / 1.055)^2.4 : x / 12.92, in both variants of the network). A plain
+// blit copies the encoded values into an image whose readers expect linear ones, so gameplay, the scenes that upscale,
+// came out washed out, and a bilinear stretch of 1536x864 to 1920x1080 looked soft. shaders/raiders_upscale.comp runs
+// FSR 1 EASU on the encoded frame and writes the decoded result. 0 when it cannot (the caller then blits);
+// DKB_RAIDERS_UPSCALE=blit keeps the old blit. The caller puts full barriers before and after it.
+static struct { int tried, ok; VkDescriptorSetLayout dsl; VkPipelineLayout layout; VkPipeline pipe; VkSampler samp; } RU;
+
+static int raiders_upscale_init(void) {
+    RU.tried = 1;
+    VkDevice dev = vk_ctx()->device;
+    if (!vk_pipeline_push_fn()) return 0;
+    VkDescriptorSetLayoutBinding b[2] = {
+        {.binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+        {.binding = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT}};
+    VkDescriptorSetLayoutCreateInfo dci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+                                           .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
+                                           .bindingCount = 2, .pBindings = b};
+    VkPushConstantRange pr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, 32};
+    VkPipelineLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1,
+                                     .pSetLayouts = &RU.dsl, .pushConstantRangeCount = 1, .pPushConstantRanges = &pr};
+    VkSamplerCreateInfo si = {.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .magFilter = VK_FILTER_LINEAR,
+                              .minFilter = VK_FILTER_LINEAR, .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                              .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                              .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                              .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, .maxLod = 0};
+    if (vkCreateDescriptorSetLayout(dev, &dci, NULL, &RU.dsl) != VK_SUCCESS ||
+        vkCreatePipelineLayout(dev, &li, NULL, &RU.layout) != VK_SUCCESS ||
+        vkCreateSampler(dev, &si, NULL, &RU.samp) != VK_SUCCESS)
+        return 0;
+    VkShaderModuleCreateInfo mi = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+                                   .codeSize = sizeof raiders_upscale_spv, .pCode = raiders_upscale_spv};
+    VkShaderModule m = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(dev, &mi, NULL, &m) != VK_SUCCESS) return 0;
+    VkComputePipelineCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+                                      .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                                .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = m, .pName = "main"},
+                                      .layout = RU.layout};
+    VkResult r = vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &ci, NULL, &RU.pipe);
+    vkDestroyShaderModule(dev, m, NULL);
+    return RU.ok = r == VK_SUCCESS;
+}
+
+// A host pipeline in the GPU fault reports: DKB_GPU_CHECKPOINTS=1 (NVIDIA checkpoints) and TOTK_CRUMB_BIND=1 name a
+// pipeline by the NVN 2 stage origins it was noted with; host shaders have none, so tag stands in for the vertex one.
+static void note_host_pipeline(VkCommandBuffer cb, VkPipeline p, uint64_t tag) {
+    if (vk_ctx()->has_nv_checkpoints && vk_checkpoints_on()) vk_checkpoint_note(p, tag, 0, 0), rec_checkpoint(cb, p);
+    if (vk_crumb_bind_on()) rec_crumb(cb, VK_CRUMB_BIND, vk_crumb_bind_note(p, tag, 0, 0));
+}
+
+static int raiders_upscale(VkExec *ex) {
+    static int mode = -1;   // 1 the shader, 0 the blit
+    if (mode < 0) mode = strcasecmp(cfg_get("DKB_RAIDERS_UPSCALE") ? cfg_get("DKB_RAIDERS_UPSCALE") : "", "blit") != 0;
+    if (!mode) return 0;
+    if (!RU.tried && !raiders_upscale_init()) rt_log("vk_exec: the Raiders upscale shader could not be set up: blits");
+    if (!RU.ok) return 0;
+    uint64_t hs = ex->tex[NVN_STAGE_CS][0], hd = ex->img[NVN_STAGE_CS][1];
+    if (!hs || !hd) return 0;
+    view_t vs, vd;
+    int hvs = 0, hvd = 0;
+    vk_texture_lock();
+    const VkTexImage *s = vk_texture_by_id_locked(&ex->tex_pool, NVN_HANDLE_TEX(hs), &vs, &hvs);
+    const VkTexImage *t = vk_texture_by_id_locked(&ex->tex_pool, NVN_HANDLE_TEX(hd), &vd, &hvd);
+    VkImageView sv = VK_NULL_HANDLE, tv = VK_NULL_HANDLE;
+    uint32_t sw = 0, sh = 0, tw = 0, th = 0;
+    if (s && t && t->format == VK_FORMAT_A2B10G10R10_UNORM_PACK32) {
+        sv = get_view(ex, s, &vs, hvs, 2, 0);   // type 2: a 2D texture (res_view_type)
+        tv = get_view(ex, t, &vd, hvd, 2, 1);
+        if (tv) vk_texture_storage_bound_locked(t);
+        sw = s->width, sh = s->height, tw = t->width, th = t->height;
+    }
+    vk_texture_unlock();
+    if (!sv || !tv) {
+        static int warned;
+        if (!warned++) rt_log("vk_exec: the Raiders upscale shader does not fit the upscaler's images: blits");
+        return 0;
+    }
+    static int logged;
+    if (!logged++)
+        rt_log("vk_exec: Splatoon Raiders' upscaler network is replaced by FSR EASU and the network's sRGB decode "
+               "(first %ux%u -> %ux%u; DKB_RAIDERS_UPSCALE=blit blits instead)", sw, sh, tw, th);
+    VkDescriptorImageInfo ii = {RU.samp, sv, VK_IMAGE_LAYOUT_GENERAL}, oi = {VK_NULL_HANDLE, tv, VK_IMAGE_LAYOUT_GENERAL};
+    VkWriteDescriptorSet w[2] = {
+        {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = 0, .descriptorCount = 1,
+         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &ii},
+        {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = 1, .descriptorCount = 1,
+         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .pImageInfo = &oi}};
+    // The whole input image is the rendered area (see mvk_upscale_cs above), so the view is the image.
+    float pc[8] = {(float)sw, (float)sh, (float)sw, (float)sh, (float)tw, (float)th, 0, 0};
+    vkCmdBindPipeline(ex->cb, VK_PIPELINE_BIND_POINT_COMPUTE, RU.pipe);
+    note_host_pipeline(ex->cb, RU.pipe, 0x5241494445525355ull);   // "RAIDERSU": the upscale stand-in
+    rec_push(vk_pipeline_push_fn(), ex->cb, VK_PIPELINE_BIND_POINT_COMPUTE, RU.layout, 0, 2, w);
+    vkCmdPushConstants(ex->cb, RU.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 32, pc);
+    vkCmdDispatch(ex->cb, (tw + 15) / 16, (th + 15) / 16, 1);
+    // the game's next draws and dispatches bind their own pipeline and descriptors again
+    vk_exec_draw_new_cb();
+    ex->dirty = VK_EXEC_DIRTY_ALL;
+    return 1;
+}
+
 // upscaler = dlss (experimental): the same dispatch of the game's upscaler is replaced by NVIDIA DLSS on its input
 // (texture slot 0) and output (image slot 1), whole images as above (vk_dlss.c). 0 when DLSS is off or failed, or the
 // images do not fit it: the shader then runs. NGX binds its own pipelines and descriptors into the command buffer, so
@@ -3144,6 +3460,13 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
     log_dispatch_once(ex, cs, d);
     if (raiders_upscaler(cs)) {   // never compiled: the driver needs minutes for it, and a blit stands in for its output
         vk_exec_barrier(ex);
+        if (raiders_upscale(ex)) {
+            ex->recorded++;
+            vk_exec_barrier(ex);
+            note_upscaler(ex, cs);
+            note_work(ex, 2, (uint64_t)d->x * (uint64_t)d->y * (uint64_t)d->z);
+            return;
+        }
         if (mvk_upscale_blit(ex, cs, 1)) {
             static int once;
             if (!once++)
@@ -3152,6 +3475,7 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
             ex->recorded++;
             vk_exec_barrier(ex);
             note_upscaler(ex, cs);
+            note_work(ex, 2, 0);   // the blit, for the GPU profile (vk_gpuprof.c)
             return;
         }
     }
@@ -3226,12 +3550,42 @@ static void op_dispatch_ind(VkExec *ex, const p_dispatch_ind *d) {
     if (vk_dump_armed) vk_dump_dispatch(ex, cs, p, info, &(p_dispatch){0, 0, 0, d->caller});
 }
 
+// Deferred and in-place uniform updates, logged every 20,000 updates (the first three times) with why the in-place ones
+// could not be deferred.
+static void ub_count(int deferred, const p_update_ub *u) {
+    static uint64_t n[2], no_snap, big, logs;
+    n[deferred]++;
+    if (!deferred) {
+        if (u->size > UBS_MAX) big++;
+        else if (!vk_usnap_bytes(u->dst, u->size)) no_snap++;
+    }
+    if (n[0] + n[1] < 20000 || logs >= 3) return;
+    VkMemSpan sp;
+    int cls = vk_mem_resolve(u->dst, u->size, &sp) ? sp.cls : -1;
+    rt_log("vk_exec: uniform updates: %llu deferred, %llu in place (%llu without a snapshot, %llu over 64 KiB); last "
+           "%#llx+%#llx class %d", (unsigned long long)n[1], (unsigned long long)n[0], (unsigned long long)no_snap,
+           (unsigned long long)big, (unsigned long long)u->dst, (unsigned long long)u->size, cls);
+    n[0] = n[1] = no_snap = big = 0;
+    logs++;
+}
+
 static void op_update_ub(VkExec *ex, const p_update_ub *u) {
     if (!u->size) return;
     VkMemSpan sp;
     if (!vk_mem_resolve(u->dst, u->size, &sp)) return warn_once(W_UB, "UpdateUniformBuffer to %#llx is not backed: dropped", (unsigned long long)u->dst);
     cb_res(ex);
-    vk_exec_barrier(ex);   // earlier draws finished with the old contents
+    // Deferred (see UBD) when the block has a snapshot and the ring still holds every update of the submission.
+    if (ub_defer_on() && u->size <= UBS_MAX && vk_usnap_bytes(u->dst, u->size) &&
+        (UPD.fence != ex->fence || UPD.n < UPD_N - 1)) {
+        upd_note(ex, u);
+        UBD.deferred[(UPD.n - 1) % UPD_N] = 1;
+        UBD.pending++;
+        ex->recorded++;   // the submission has work: its closing barrier flushes the copies
+        ub_count(1, u);
+        return;
+    }
+    ub_count(0, u);
+    vk_exec_barrier(ex);   // earlier draws finished with the old contents; deferred updates go in first (barrier_to)
     VkBuffer b;
     VkDeviceSize o;
     memcpy(scratch(ex, u->size, &b, &o), u->data, u->size);

@@ -52,7 +52,7 @@ The build writes the executable and its derived index under `build\raiders`. Rai
 in place, so it does not need to be repacked into a second multi-gigabyte image. Running the current bring-up build:
 
 ```powershell
-build\raiders\raiders.exe --boot
+build\raiders\splatoon-raiders.exe --boot
 ```
 
 ## Origins and licenses

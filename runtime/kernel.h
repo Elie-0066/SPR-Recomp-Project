@@ -34,6 +34,7 @@ enum { KERN_WAIT_NONE, KERN_WAIT_LOCK, KERN_WAIT_CONDVAR, KERN_WAIT_ADDRESS, KER
 int kern_thread_state(uint32_t handle);               // KERN_WAIT_*, KERN_THREAD_EXITED, or -1 for a bad handle
 void kern_core_stats(int *held_now, int *held_max);   // virtual-core holders now and the most ever at once
 void kern_core_stats_reset(void);
+void kern_slow_sample(char *out, size_t cap);         // the non-idle guest threads, one line each (boot.c's slow-frame sampler)
 void kern_hang_report(void);                          // every live guest thread: wait, pc, lr, frame chain (no lock taken)
 extern volatile int kern_test_cv_old_order;           // WaitProcessWideKeyAtomic: release the lock before setting
                                                       // the key (MNG's pre-fix order, the negative control)

@@ -1,0 +1,52 @@
+// Splatoon Raiders: the stand-in for the game's neural-network upscaler (runtime/vk_exec_draw.c raiders_upscale). The
+// network reads a frame stored sRGB-encoded and ends with the sRGB decode, x < 0.04045 ? x / 12.92 :
+// ((x + 0.055) / 1.055)^2.4, so the passes after it receive linear colour. This shader does the same two things: AMD's
+// EASU (ffx/ffx_a.h and ffx/ffx_fsr1.h, MIT, ffx/LICENSE.txt) scales the encoded frame, where its edge detection is
+// meant to work, then the decode writes linear colour. Alpha is the input's, read at the nearest texel.
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D src;
+layout(set = 0, binding = 1, rgb10_a2) uniform writeonly image2D dst;
+
+layout(push_constant) uniform Params {
+    vec4 view;   // input width, input height, input image width, input image height
+    vec4 out_;   // output width, output height, 0, 0
+} pc;
+
+#define A_GPU 1
+#define A_GLSL 1
+#include "ffx/ffx_a.h"
+#define FSR_EASU_F 1
+AF4 FsrEasuRF(AF2 p) { return textureGather(src, p, 0); }
+AF4 FsrEasuGF(AF2 p) { return textureGather(src, p, 1); }
+AF4 FsrEasuBF(AF2 p) { return textureGather(src, p, 2); }
+#include "ffx/ffx_fsr1.h"
+
+vec3 srgb_decode(vec3 x) {
+    x = clamp(x, 0.0, 1.0);
+    return mix(pow((x + 0.055) / 1.055, vec3(2.4)), x / 12.92, lessThan(x, vec3(0.04045)));
+}
+
+void put(AU2 p, AU4 c0, AU4 c1, AU4 c2, AU4 c3) {
+    if (p.x >= uint(pc.out_.x) || p.y >= uint(pc.out_.y)) return;
+    AF3 c;
+    FsrEasuF(c, p, c0, c1, c2, c3);
+    float a = textureLod(src, (vec2(p) + 0.5) / pc.out_.xy * pc.view.xy / pc.view.zw, 0.0).a;
+    imageStore(dst, ivec2(p), vec4(srgb_decode(c), a));
+}
+
+void main() {
+    AU4 c0, c1, c2, c3;
+    FsrEasuConOffset(c0, c1, c2, c3, pc.view.x, pc.view.y, pc.view.z, pc.view.w, pc.out_.x, pc.out_.y, 0.0, 0.0);
+    AU2 p = ARmp8x8(gl_LocalInvocationID.x) + AU2(gl_WorkGroupID.x << 4u, gl_WorkGroupID.y << 4u);
+    put(p, c0, c1, c2, c3);
+    p.x += 8u;
+    put(p, c0, c1, c2, c3);
+    p.y += 8u;
+    put(p, c0, c1, c2, c3);
+    p.x -= 8u;
+    put(p, c0, c1, c2, c3);
+}

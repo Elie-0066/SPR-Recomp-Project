@@ -60,6 +60,9 @@ typedef struct Tex {
     uint8_t *snap;                // a texture that fills no page: its storage bytes when the GPU write was recorded
     uint32_t wt_n;                // WriteTexels into the storage since the last upload
     struct Tex *rel_prev, *rel_next;   // while released: the list of released entries, oldest first
+    struct TexPf *pf;             // the copy of its newest render recorded for the fence write-back (pf_record)
+    uint8_t pf_want;              // the fence write-back sent it back once: its renders are copied as they are recorded
+    uint8_t pf_listed;            // in pf_list
 } Tex;
 
 // A slot keeps what vk_texture_by_id resolved for it, so a draw binding skips the key lookup and the address chain: the
@@ -137,11 +140,73 @@ static void tex_init(void *p) {
     __atomic_store_n(&tex_ready, 1, __ATOMIC_RELEASE);
     return;
 }
-static void lock(void) {
-    if (!__atomic_load_n(&tex_ready, __ATOMIC_ACQUIRE)) plat_once(&tex_once, tex_init, NULL);
-    plat_rmutex_lock(&tex_lock);
+// DKB_TEXLOCK_PROF=1: who holds tex_lock and who waits for it. Per caller of the outermost lock (return address),
+// the hold and wait time; the top callers are logged every 600 presents.
+static int tlp_on = -1;
+static _Thread_local int tlp_depth;
+static _Thread_local uint64_t tlp_t0;
+static _Thread_local const char *tlp_who;
+static _Thread_local void *tlp_ra;
+typedef struct { const char *who; void *ra; uint64_t hold, wait, n; } TlpRec;
+static TlpRec tlp[64];
+static PlatMutex tlp_lock = PLAT_MUTEX_INIT;
+static uint64_t tlp_frame;
+
+static void tlp_add(const char *who, void *ra, uint64_t hold, uint64_t wait) {
+    plat_mutex_lock(&tlp_lock);
+    for (int i = 0; i < 64; i++)
+        if ((tlp[i].who == who && tlp[i].ra == ra) || !tlp[i].who) {
+            tlp[i].who = who, tlp[i].ra = ra, tlp[i].hold += hold, tlp[i].wait += wait, tlp[i].n++;
+            break;
+        }
+    uint64_t f = perf_frames_presented();
+    if (f >= tlp_frame + 600) {
+        if (tlp_frame) {
+            rt_log("texlock: frames %llu-%llu, per frame (caller: hold ms, wait ms, calls):", (unsigned long long)tlp_frame,
+                   (unsigned long long)f);
+            double nf = (double)(f - tlp_frame);
+            for (int k = 0; k < 12; k++) {
+                int b = -1;
+                for (int i = 0; i < 64; i++)
+                    if (tlp[i].who && (b < 0 || tlp[i].hold + tlp[i].wait > tlp[b].hold + tlp[b].wait)) b = i;
+                if (b < 0 || !(tlp[b].hold + tlp[b].wait)) break;
+                rt_log("texlock:   %s (from %p): %.3f %.3f %.1f", tlp[b].who, tlp[b].ra,
+                       tlp[b].hold / 1e6 / nf, tlp[b].wait / 1e6 / nf, tlp[b].n / nf);
+                tlp[b].hold = tlp[b].wait = 0;
+            }
+        }
+        memset(tlp, 0, sizeof tlp);
+        tlp_frame = f;
+    }
+    plat_mutex_unlock(&tlp_lock);
 }
-static void unlock(void) { plat_rmutex_unlock(&tex_lock); }
+
+#define lock() lock_at(__func__, __builtin_return_address(0))
+static void lock_at(const char *who, void *ra) {
+    if (!__atomic_load_n(&tex_ready, __ATOMIC_ACQUIRE)) plat_once(&tex_once, tex_init, NULL);
+    if (tlp_on < 0) tlp_on = getenv("DKB_TEXLOCK_PROF") && strcmp(getenv("DKB_TEXLOCK_PROF"), "0");
+    if (!tlp_on) {
+        plat_rmutex_lock(&tex_lock);
+        return;
+    }
+    uint64_t t0 = tlp_depth ? 0 : plat_now_ns();
+    plat_rmutex_lock(&tex_lock);
+    if (!tlp_depth++) {
+        tlp_t0 = plat_now_ns(), tlp_who = who, tlp_ra = ra;
+        if (tlp_t0 - t0 > 20000) tlp_add(who, ra, 0, tlp_t0 - t0);
+    }
+}
+static void unlock(void) {
+    if (tlp_on > 0 && !--tlp_depth) {
+        uint64_t h = plat_now_ns() - tlp_t0;
+        const char *who = tlp_who;
+        void *ra = tlp_ra;
+        plat_rmutex_unlock(&tex_lock);
+        tlp_add(who, ra, h, 0);
+        return;
+    }
+    plat_rmutex_unlock(&tex_lock);
+}
 
 static uint32_t umax(uint32_t a, uint32_t b) { return a > b ? a : b; }
 static uint32_t mip(uint32_t v, unsigned lv) { return umax(v >> lv, 1); }
@@ -505,8 +570,10 @@ static void rel_unlink(Tex *e) {
 }
 
 static void wb_async_forget(const Tex *e);
+static void pf_drop(Tex *e);
 static void destroy_tex(Tex *e) {
     wb_async_forget(e);
+    pf_drop(e);
     own_remove(e);
     tex_gen_bump(e->key.addr);
     nvn_hm_del(&by_key, &e->key);
@@ -1023,6 +1090,10 @@ static void wb_cfg_init(void) {
     if (wb_limit != WB_SMALL_DEFAULT) rt_log("vk: fence write-back limit %llu bytes", (unsigned long long)wb_limit);
 }
 
+#define PF_LIST 32
+static Tex *pf_list[PF_LIST];   // tex_lock: wanted small targets rendered since the last vk_texture_prefetch_flush
+static int npf;
+
 void vk_texture_gpu_written(const tex_t *t) {
     if (!t || !t->mem) return;
     vk_exec_frame_written(t);
@@ -1064,6 +1135,7 @@ void vk_texture_gpu_written(const tex_t *t) {
             wb_cfg_init();
             if (e->t.L.size <= wb_limit) __atomic_store_n(&small_pending, 1, __ATOMIC_RELEASE);
             own_add(e);
+            if (e->pf_want && !e->pf_listed && e->t.L.size <= wb_limit && npf < PF_LIST) pf_list[npf++] = e, e->pf_listed = 1;
         }
     }
     unlock();
@@ -1835,6 +1907,109 @@ static void wb_note(const Tex *e, int skipped) {
            (unsigned long long)wb_limit);
 }
 
+// Prefetched fence write-backs. A small render target the CPU reads after a fence wait (vk_texture_write_back_small)
+// was read back then: a copy through the upload batch and a wait for it, behind all the GPU work queued since, about
+// 0.7 ms per texture with tex_lock held, which the render thread's next submit waited for every frame in Splatoon
+// Raiders. Releasing the lock during that wait let the next submission record before the storage held the render,
+// and the dialogue flickered again. Instead, once a texture has gone back this way (pf_want), each render of it is
+// followed in the same command buffer by a copy into a host buffer (vk_texture_prefetch_flush at the end of the pass,
+// vk_exec.c vk_exec_pass_end), so at the fence wait the texels are already on the host and the write-back is a copy
+// into the storage, still under the lock and in the same order. DKB_WB_PREFETCH=0 turns it off.
+typedef struct TexPf {
+    VkBuffer b;
+    VmaAllocation a;
+    uint8_t *map;
+    uint64_t gseq, fence;         // e->gpu_seq of the render copied; the submission the copy is recorded in
+    Region g;
+    NVNcopyRegion r;
+} TexPf;
+
+static int pf_on(void) {
+    static int on = -1;
+    if (on < 0) {
+        on = !(getenv("DKB_WB_PREFETCH") && !strcmp(getenv("DKB_WB_PREFETCH"), "0"));
+        rt_log("vk: fence write-backs of small targets %s (DKB_WB_PREFETCH)",
+               on ? "copied to the host after each render" : "read back at the fence wait");
+    }
+    return on;
+}
+
+static void pf_free(void *p) {
+    TexPf *f = p;
+    vmaDestroyBuffer(vk_ctx()->vma, f->b, f->a);
+    free(f);
+}
+
+static void pf_drop(Tex *e) {   // tex_lock held
+    if (e->pf) vk_completion_add(e->pf->fence, pf_free, e->pf), e->pf = NULL;
+    if (e->pf_listed)
+        for (int i = 0; i < npf; i++)
+            if (pf_list[i] == e) { pf_list[i] = pf_list[--npf]; break; }
+    e->pf_listed = 0;
+}
+
+// Records the copy of e's single level and layer after its render; 0 when it cannot go this way.
+static int pf_record(Tex *e, VkCommandBuffer cb, uint64_t fence) {
+    const nvn_texdesc *d = &e->t.d;
+    VkImageAspectFlags aspect;
+    if (e->f.astc_bw || e->f.expand_rgb || !read_aspect(e, &aspect) || e->pub.levels != 1 ||
+        (e->pub.layers != 1 && !nvn_tex_is_linear(d)) || d->target == NVN_TEXTURE_TARGET_3D)
+        return 0;
+    view_t v = {.set_levels = 1, .set_layers = 1};
+    NVNcopyRegion r = {.width = (int)d->width, .height = d->target == 0 || d->target == 3 ? 1 : (int)d->height, .depth = 1};
+    Region g;
+    if (!region_of(&e->t, &v, &r, 0, 0, &g) || g.nz != 1) return 0;
+    TexPf *f = calloc(1, sizeof *f);
+    if (!f) return 0;
+    VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = g.wb * g.hb,
+                             .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
+    VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+                                  .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
+    VmaAllocationInfo info;
+    if (vmaCreateBuffer(vk_ctx()->vma, &bi, &ai, &f->b, &f->a, &info) != VK_SUCCESS) {
+        free(f);
+        return 0;
+    }
+    f->map = info.pMappedData, f->g = g, f->r = r, f->gseq = e->gpu_seq, f->fence = fence;
+    VkBufferImageCopy rg = {.imageSubresource = {aspect, 0, g.layer0, 1}, .imageExtent = {(uint32_t)r.width, (uint32_t)r.height, 1}};
+    barrier(cb, ALL_RW, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+    vkCmdCopyImageToBuffer(cb, e->pub.image, VK_IMAGE_LAYOUT_GENERAL, f->b, 1, &rg);
+    barrier(cb, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_HOST_BIT | VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            VK_ACCESS_2_HOST_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+    if (e->pf) vk_completion_add(e->pf->fence, pf_free, e->pf);
+    e->pf = f;
+    return 1;
+}
+
+void vk_texture_prefetch_flush(VkCommandBuffer cb) {
+    if (!__atomic_load_n(&npf, __ATOMIC_RELAXED)) return;
+    lock();
+    uint64_t fence = vk_exec_recording_fence();
+    for (int i = 0; i < npf; i++) {
+        Tex *e = pf_list[i];
+        e->pf_listed = 0;
+        if (!fence || !e->gpu_dirty || e->gpu_fence != fence || !pf_record(e, cb, fence)) e->pf_want = 0;
+    }
+    npf = 0;
+    unlock();
+}
+
+// The prefetched copy of e's newest render into its storage; 0 when there is none to use.
+static int pf_write(Tex *e, uint64_t fence) {
+    TexPf *f = e->pf;
+    if (!f || f->gseq != e->gpu_seq || f->fence > fence) return 0;
+    const Region *g = &f->g;
+    uint8_t *buf = malloc(g->img);
+    if (!buf) return 0;
+    vmaInvalidateAllocation(vk_ctx()->vma, f->a, 0, VK_WHOLE_SIZE);
+    for (size_t y = 0; y < g->hb; y++) memcpy(buf + y * g->row, f->map + y * g->wb, g->wb);
+    storage_texels(&e->t, g, &f->r, buf, 1);
+    free(buf);
+    e->gpu_dirty = 0;
+    return 1;
+}
+
 void vk_texture_write_back_small(uint64_t fence) {
     lock();
     wb_cfg_init();
@@ -1874,7 +2049,18 @@ void vk_texture_write_back_small(uint64_t fence) {
             Tex *x = hit[j];
             hit[j] = hit[j - 1], hit[j - 1] = x;
         }
-    for (int i = 0; i < k; i++) write_back(hit[i]);
+    static uint64_t pf_hit, pf_miss;
+    for (int i = 0; i < k; i++) {
+        if (pf_on() && pf_write(hit[i], fence)) {
+            pf_hit++;
+            continue;
+        }
+        write_back(hit[i]);
+        if (pf_on()) hit[i]->pf_want = 1, pf_miss++;
+    }
+    if (pf_on() && k && (pf_hit + pf_miss) % 2000 < (uint64_t)k)
+        rt_log("vk: fence write-backs of small targets: %llu from prefetched copies, %llu read back",
+               (unsigned long long)pf_hit, (unsigned long long)pf_miss);
     for (int i = 0; i < k; i++) perf_count(PERF_CNT_WB);
     for (int i = k; i < n; i++) perf_count(PERF_CNT_WB_SKIP);
     free(hit);

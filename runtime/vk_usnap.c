@@ -306,6 +306,14 @@ void vk_usnap_drop(uint64_t addr, uint64_t n) {
         if (!U.reg[i].dropped) U.reg[i].dropped = 1, U.drops++, U.gen++;
 }
 
+// A GPU write of the replay that later submissions must not snapshot before it completes, without dropping this
+// submission's copies (vk_exec_draw.c applies its deferred uniform updates over them itself).
+void vk_usnap_note_write(uint64_t addr, uint64_t n) {
+    if (!U.mode || !n) return;
+    if (U.nwr == U.cwr) U.wr = grow(U.wr, &U.cwr, sizeof *U.wr);
+    U.wr[U.nwr++] = (Wrote){addr, addr + n, U.fence};
+}
+
 uint64_t vk_usnap_gen(void) { return U.gen; }
 uint64_t vk_usnap_arena_bytes(void) { return __atomic_load_n(&arena_total, __ATOMIC_RELAXED); }
 

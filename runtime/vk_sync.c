@@ -306,6 +306,32 @@ WEAK int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint
     return 0;
 }
 
+// Where a submission's time goes (always on, one line every 10 s): from vkQueueSubmit2 to the timeline value being
+// reached (GPU queue and execution), and the CPU side effects run for it on the completion thread, with the slowest
+// single callback named. Splatoon Raiders paces its frames on GPU-signalled events, so either delay is a frame delay.
+#define LAT_RING 4096
+static volatile uint64_t lat_submit[LAT_RING];   // kern_now_ns at vkQueueSubmit2, by timeline value
+static struct {
+    uint64_t t0, n, gpu_sum, gpu_max, cb_sum, cb_max, slow_ns, ncb;
+    void (*slow_fn)(void *);
+} lat;
+
+static void lat_report(uint64_t now) {
+    if (!lat.t0) lat.t0 = now;
+    if (now - lat.t0 < 10000000000ull) return;
+    if (lat.n) {
+        char buf[160];
+        const char *who = lat.slow_fn ? plat_addr_describe((uint64_t)(uintptr_t)lat.slow_fn, buf, sizeof buf) : "none";
+        if (!who) who = "?";
+        rt_log("vk_sync: 10 s: %llu submissions; GPU done after avg %.1f ms, max %.1f ms from submit; side effects avg "
+               "%.2f ms, max %.1f ms per wake (%llu callbacks); slowest callback %.1f ms (%s)",
+               (unsigned long long)lat.n, lat.gpu_sum / 1e6 / lat.n, lat.gpu_max / 1e6, lat.cb_sum / 1e6 / lat.n,
+               lat.cb_max / 1e6, (unsigned long long)lat.ncb, lat.slow_ns / 1e6, who);
+    }
+    memset(&lat, 0, sizeof lat);
+    lat.t0 = now;
+}
+
 static void completion_main(void *arg) {
     VkCtx *c = arg;
     plat_mutex_lock(&st_lock);
@@ -328,12 +354,30 @@ static void completion_main(void *arg) {
             plat_mutex_lock(&st_lock);
             if (reached > issued) reached = issued;
         }
+        uint64_t lat_t = kern_now_ns();
+        for (uint64_t v = done + 1; v <= reached && v - done <= LAT_RING; v++) {
+            uint64_t ts = __atomic_load_n(&lat_submit[v % LAT_RING], __ATOMIC_RELAXED);
+            uint64_t d = ts && lat_t > ts ? lat_t - ts : 0;
+            perf_tl("gpu-done", v, d / 1000);
+            lat.n++, lat.gpu_sum += d;
+            if (d > lat.gpu_max) lat.gpu_max = d;
+        }
         while (qn && queue[qhead].fence <= reached) {
             Pending p = queue[qhead++];
             qn--;
             plat_mutex_unlock(&st_lock);
+            uint64_t c0 = kern_now_ns();
             p.fn(p.arg);
+            uint64_t cd = kern_now_ns() - c0;
+            lat.ncb++;
+            if (cd > lat.slow_ns) lat.slow_ns = cd, lat.slow_fn = p.fn;
             plat_mutex_lock(&st_lock);
+        }
+        {
+            uint64_t now = kern_now_ns(), cb = now - lat_t;
+            lat.cb_sum += cb;
+            if (cb > lat.cb_max) lat.cb_max = cb;
+            lat_report(now);
         }
         if (reached > done) {
             plat_mutex_unlock(&st_lock);
@@ -420,7 +464,7 @@ static VkCommandBuffer prologue(VkCtx *c, uint64_t fence) {
                                    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     vkBeginCommandBuffer(cb, &bi);
     int pair = ts_open(cb);
-    vk_mem_mirror_prologue(cb);
+    vk_mem_mirror_prologue(cb, fence);
     ts_close(cb, pair, fence, NULL);
     vkEndCommandBuffer(cb);
     return cb;
@@ -528,6 +572,8 @@ uint64_t vk_sync_submit_record(VkSyncRecordFn record, void *context, uint64_t su
         rt_fatal("vk: vkQueueSubmit2 of value %llu failed (%d)", (unsigned long long)fence, (int)r);
     }
     s->fence = recorded ? fence : 0;
+    __atomic_store_n(&lat_submit[fence % LAT_RING], kern_now_ns(), __ATOMIC_RELAXED);
+    perf_tl("vk-submit", fence, 0);
     plat_mutex_lock(&st_lock);
     __atomic_store_n(&issued, fence, __ATOMIC_RELEASE);
     plat_cond_broadcast(&cv_work);

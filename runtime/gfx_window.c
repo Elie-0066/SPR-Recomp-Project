@@ -164,6 +164,7 @@ static void vsync_main(void *arg) {
         }
         n++;
         plat_xchg64(&g_ticks, (int64_t)n);
+        perf_tl("vsync", n, 0);
         uint64_t ev[16];
         volatile int32_t *ctr[4];
         int ne, nc;

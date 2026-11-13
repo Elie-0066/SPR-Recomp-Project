@@ -2364,3 +2364,22 @@ void kern_hang_report(void) {
         }
     }
 }
+
+// One line per guest thread that is not an idle worker (those wait in ReceiveLightMessageQueue), for the slow-frame
+// sampler in boot.c: what the game waits for while a frame takes far longer than the host's own replay did.
+void kern_slow_sample(char *out, size_t cap) {
+    char d[160], e[160];
+    size_t n = 0;
+    out[0] = 0;
+    for (RtThread *t = g_all; t; t = t->all) {
+        if (t->exited) continue;
+        Cpu *c = t->cur ? t->cur : t->cpu;
+        if (!c) continue;
+        const char *pc = ldr_describe(c->pc, d, sizeof d);
+        if (strstr(pc, "ReceiveLightMessageQueue")) continue;
+        int w = snprintf(out + n, cap - n, "slow:   thread %#x prio %d wait %d obj %#llx host calls %d pc %s lr %s\n", t->handle,
+                         t->prio, t->wkind, (unsigned long long)t->wobj, t->host_depth, pc, ldr_describe(c->x[30], e, sizeof e));
+        if (w < 0 || (size_t)w >= cap - n) break;
+        n += (size_t)w;
+    }
+}

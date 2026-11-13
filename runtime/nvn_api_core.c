@@ -496,10 +496,12 @@ NVN_API(nvnSyncWait) {
     const GfxBackend *b = gfx_backend();
     if (b->fence_done() >= s->fence) { b->cpu_synced(s->fence); ret_x(c, NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED); return; }
     int ok;
+    perf_tl("syncwait-in", s->fence, b->fence_done());
     {
         NVN_BLOCKING();
         ok = b->fence_wait(s->fence, timeout);
     }
+    perf_tl("syncwait-out", s->fence, (uint64_t)ok);
     if (ok) b->cpu_synced(s->fence);
     ret_x(c, ok ? NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED : NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED);
 }
@@ -630,6 +632,7 @@ NVN_API(nvnQueueSubmitCommands) {
     const uint64_t *h = arg_p(c, 2);
     if (n < 0 || (n && !h)) rt_fatal("nvn: QueueSubmitCommands with %d handles at %p", n, (const void *)h);
     NVN_BLOCKING();
+    perf_tl("submit-in", (uint64_t)n, 0);
     uint64_t no = __atomic_add_fetch(&lod_entered, 1, __ATOMIC_SEQ_CST);
     q->submits++;
     uint64_t f;
@@ -651,6 +654,26 @@ NVN_API(nvnQueueSubmitCommands) {
     while (f > prev && !__atomic_compare_exchange_n(&last_fence, &prev, f, 1, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {}
     __atomic_store_n(&lod_fence[no % LOD_RING], f, __ATOMIC_RELAXED);
     __atomic_store_n(&lod_issued, no, __ATOMIC_SEQ_CST);
+    perf_tl("submit-out", f, 0);
+    if (nvn_submit_wait_mode() == 1 && gfx_backend()->fence_done() < f) gfx_backend()->fence_wait(f, 1000000000ull);
+}
+
+// Splatoon Raiders writes its per-frame data for the next frame right after a present, with no fence, on the
+// assumption the console's GPU has already read the frame's data. Here the GPU starts after the replay and finishes
+// up to 25 ms after the submit, so the next frame's writes land in data it still reads: the dialogue scene flickers
+// between a lit and a dark, green-tinted picture, gameplay textures blink, and the uneven frames stutter the camera.
+// Making QueuePresentTexture return only once the GPU finished everything submitted before it removes all three
+// (DKB_SUBMIT_WAIT=1, a wait after every submit, did too but cost gameplay 4 fps; this one costs about 1).
+// DKB_SUBMIT_WAIT: 0 off, 1 every submit waits for its GPU work, 2 QueuePresentTexture waits for all of it (the
+// default for Splatoon Raiders, 0 for other targets).
+int nvn_submit_wait_mode(void) {
+    static int mode = -1;
+    if (mode < 0) {
+        const char *e = getenv("DKB_SUBMIT_WAIT");
+        mode = e ? atoi(e) : !strcmp(rt_game_target, "raiders") ? 2 : 0;
+        if (mode) rt_log("nvn: %s waits for the GPU (DKB_SUBMIT_WAIT=%d)", mode == 1 ? "every submit" : "every present", mode);
+    }
+    return mode;
 }
 
 // The producer (1.2.1 main f_70008c6460) releases the read lock on obj+0x538 at lr 0x70008c70c8; when
