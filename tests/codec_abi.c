@@ -66,12 +66,16 @@ static void initialize(int variant) {
     static const char *symbols[] = {
         "_ZN2nn5codec20InitializeVp9DecoderEPNS0_14Vp9DecoderTypeEPvmmttjNS0_23VideoDecoderInputFormatENS0_24VideoDecoderOutputFormatE",
         "_ZN2nn5codec20InitializeVp9DecoderEPNS0_14Vp9DecoderTypeEmmttjNS0_23VideoDecoderInputFormatENS0_24VideoDecoderOutputFormatE",
-        "_ZN2nn5codec20InitializeVp9DecoderEPNS0_14Vp9DecoderTypeEmttjNS0_23VideoDecoderInputFormatENS0_24VideoDecoderOutputFormatE"
+        "_ZN2nn5codec20InitializeVp9DecoderEPNS0_14Vp9DecoderTypeEmttjNS0_23VideoDecoderInputFormatENS0_24VideoDecoderOutputFormatE",
+        // Splatoon Raiders' SDK: the first two layouts again, with a trailing OutputMode on the stack
+        "_ZN2nn5codec36InitializeVp9DecoderByTransferMemoryEPNS0_14Vp9DecoderTypeEPvmmttjNS0_23VideoDecoderInputFormatENS0_24VideoDecoderOutputFormatENS0_22VideoDecoderOutputModeE",
+        "_ZN2nn5codec34InitializeVp9DecoderByRemoteMemoryEPNS0_14Vp9DecoderTypeEmttjNS0_23VideoDecoderInputFormatENS0_24VideoDecoderOutputFormatENS0_22VideoDecoderOutputModeE"
     };
+    static const int width_args[] = {4, 3, 2, 4, 2};
     Cpu c = {0};
     c.x[0] = 0x1234;
     for (int i = 1; i < 8; i++) c.x[i] = 111 + i;
-    int width_arg = 4 - variant;
+    int width_arg = width_args[variant];
     c.x[width_arg] = 960;
     c.x[width_arg + 1] = 540;
     GuestFn fn = binding(symbols[variant]);
@@ -107,13 +111,29 @@ static void try_wait_point(void) {
     decs[0].slot[3].state = S_FREE;
 }
 
+// UnregisterVp9DecoderBuffer(Vp9DecoderType *, u32 index): the index loses its pool and its picture, so Acquire skips it.
+static void unregister(void) {
+    GuestFn fn = binding("_ZN2nn5codec26UnregisterVp9DecoderBufferEPNS0_14Vp9DecoderTypeEj");
+    assert(fn);
+    decs[0].key = 0x1234;
+    decs[0].slot[5] = (Slot){.pool = 0x9000, .state = S_FILLED, .w = 16, .h = 16, .nv12 = malloc(16 * 16 * 3 / 2)};
+    Cpu c = {0};
+    c.x[0] = 0x1234, c.x[1] = 5;
+    fn(&c);
+    assert(c.x[0] == 0 && !decs[0].slot[5].pool && decs[0].slot[5].state == S_FREE && !decs[0].slot[5].nv12);
+    c.x[0] = 0x1234, c.x[1] = SLOTS;   // past the table: ignored
+    fn(&c);
+    assert(c.x[0] == 0);
+}
+
 int main(void) {
-    for (int variant = 0; variant < 3; variant++) initialize(variant);
+    for (int variant = 0; variant < 5; variant++) initialize(variant);
+    unregister();
     decs[0].key = 0x1234;
     decs[0].slot[3] = (Slot){.w=960, .h=540, .pts=123456789, .eos=1};
     properties(0);
     properties(1);
     try_wait_point();
-    puts("codec ABI: three initializers, base/update properties and the sync point poll passed");
+    puts("codec ABI: five initializers, buffer unregistration, base/update properties and the sync point poll passed");
     return 0;
 }

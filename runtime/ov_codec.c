@@ -14,6 +14,10 @@
 // - a submission with no reserved buffer to decode into answers "not ready" (the wrapper's retry code 0x76);
 // - the picture is read with ReadDecoderOutputImageNv12 (Y plane, then interleaved UV, each with the caller's pitch).
 //   GetDecoderImagePoolNativeImageHandle (the player's GPU path) has no image yet and returns 0.
+// Splatoon Raiders' SDK (its UI/Movie/*.webm, VP9, read as NV12 by the movie library in subsdk0) renames or reshapes
+// some of these calls: the decoder is initialised ByTransferMemory / ByRemoteMemory with a trailing OutputMode,
+// InitializeDecoderImagePool drops its CodecMode, GetVp9DecoderSubmissionReadyEvent returns the event, and
+// UnregisterVp9DecoderBuffer is new. Both sets of names are overridden; a name a game's SDK lacks is never called.
 // libvpx is BSD-3-Clause and already linked for ov_movie.c.
 #include <stdint.h>
 #include <stdlib.h>
@@ -184,6 +188,10 @@ static void ov_vp9_init(Cpu *c) { vp9_init(c, arg_x(c, 0), arg_x(c, 4) & 0xffff,
 // Result InitializeVp9Decoder(Vp9DecoderType *, size_t, size_t, u16 w, u16 h, u32, input, output fmt)
 static void ov_vp9_init_nowork(Cpu *c) { vp9_init(c, arg_x(c, 0), arg_x(c, 3) & 0xffff, arg_x(c, 4) & 0xffff); }
 static void ov_vp9_init_nowork_update(Cpu *c) { vp9_init(c, arg_x(c, 0), arg_x(c, 2) & 0xffff, arg_x(c, 3) & 0xffff); }
+// Raiders: InitializeVp9DecoderByTransferMemory(Vp9DecoderType *, void *, size_t, size_t, u16 w, u16 h, u32, input,
+// output fmt, OutputMode) takes the arguments of ov_vp9_init, and InitializeVp9DecoderByRemoteMemory(Vp9DecoderType *,
+// size_t, u16 w, u16 h, u32, input, output fmt, OutputMode) those of ov_vp9_init_nowork_update; the OutputMode on the
+// stack does not matter to libvpx. The SDK's own code opens the video service over IPC and aborts.
 
 // Result FinalizeVp9Decoder(Vp9DecoderType *)
 static void ov_vp9_fini(Cpu *c) {
@@ -206,8 +214,11 @@ static void ov_vp9_fini(Cpu *c) {
 static void ov_vp9_flush(Cpu *c) {
     plat_mutex_lock(&lock);
     Dec *d = dec_of(arg_x(c, 0));
-    // The base build keeps the old rule (a decoded picture is dropped); only the update reserves it.
-    if (d && strcmp(rt_game_target, "dkb458752"))
+    // Bananza 1.0.0 keeps the old rule (a decoded picture is dropped); its update 3.2.0 and Raiders keep the picture.
+    // Raiders' movie library (subsdk0, movie::detail::VideoDecoderEventManager::Loop) runs a fence callback for the
+    // signalled event after the flush and aborts when the buffer it was told about holds no picture any more: the
+    // crash on moving from one UI movie to the next.
+    if (d && strcmp(rt_game_target, "dkb458752") && strcmp(rt_game_target, "raiders"))
         for (int i = 0; i < SLOTS; i++)
             if (d->slot[i].state == S_FILLED) d->slot[i].state = S_WAIT;
     if (d) queue_drop(d);   // the packets not decoded yet
@@ -227,6 +238,22 @@ static void ov_vp9_register(Cpu *c) {
     if (d && i < SLOTS) d->slot[i].pool = arg_x(c, 2), d->slot[i].state = S_FREE;
     plat_mutex_unlock(&lock);
     if (!d || i >= SLOTS) rt_log("codec: RegisterVp9DecoderBuffer index %u of an unknown decoder or past %d", i, SLOTS);
+    ret_x(c, 0);
+}
+
+// Result UnregisterVp9DecoderBuffer(Vp9DecoderType *, u32 index) (Raiders): the index no longer has a pool, so
+// AcquireVp9DecoderOutputBuffer stops handing it out; a picture it held is dropped.
+static void ov_vp9_unregister(Cpu *c) {
+    uint32_t i = (uint32_t)arg_x(c, 1);
+    plat_mutex_lock(&lock);
+    Dec *d = dec_of(arg_x(c, 0));
+    if (d && i < SLOTS) {
+        Slot *s = &d->slot[i];
+        free(s->nv12);
+        memset(s, 0, sizeof *s);
+    }
+    plat_mutex_unlock(&lock);
+    TRACE("unregister: buffer %u", i);
     ret_x(c, 0);
 }
 
@@ -282,6 +309,16 @@ static void ov_vp9_ready_event(Cpu *c) {
     *out = ev;
     TRACE("submission-ready event %#llx handed out (signalled)", (unsigned long long)ev);
     ret_x(c, 0);
+}
+
+// nn::os::SystemEventType *GetVp9DecoderSubmissionReadyEvent(Vp9DecoderType *) (Raiders): the SDK returns the event
+// inside the decoder object (+8), which the video service would bind and signal; the host hands out its own event
+// instead, the one ov_vp9_acquire signals.
+static void ov_vp9_ready_event_ret(Cpu *c) {
+    uint64_t ev = event_for(c, arg_x(c, 0));
+    kern_signal_system_event(ev);
+    TRACE("submission-ready event %#llx returned (signalled)", (unsigned long long)ev);
+    ret_x(c, ev);
 }
 
 // Result SubmitVp9DecoderInputBuffer(u64 *id, Vp9DecoderType *, const void *data, size_t size, TimeSpan pts, bool end):
@@ -524,6 +561,11 @@ HOST_OVERRIDE("_ZN2nn5codec20InitializeVp9DecoderEPNS0_14Vp9DecoderTypeEmmttjNS0
               "24VideoDecoderOutputFormatE", ov_vp9_init_nowork);
 HOST_OVERRIDE("_ZN2nn5codec20InitializeVp9DecoderEPNS0_14Vp9DecoderTypeEmttjNS0_23VideoDecoderInputFormatENS0_"
               "24VideoDecoderOutputFormatE", ov_vp9_init_nowork_update);
+HOST_OVERRIDE("_ZN2nn5codec36InitializeVp9DecoderByTransferMemoryEPNS0_14Vp9DecoderTypeEPvmmttjNS0_23VideoDecoderInput"
+              "FormatENS0_24VideoDecoderOutputFormatENS0_22VideoDecoderOutputModeE", ov_vp9_init);
+HOST_OVERRIDE("_ZN2nn5codec34InitializeVp9DecoderByRemoteMemoryEPNS0_14Vp9DecoderTypeEmttjNS0_23VideoDecoderInputFormat"
+              "ENS0_24VideoDecoderOutputFormatENS0_22VideoDecoderOutputModeE", ov_vp9_init_nowork_update);
+HOST_OVERRIDE("_ZN2nn5codec26UnregisterVp9DecoderBufferEPNS0_14Vp9DecoderTypeEj", ov_vp9_unregister);
 HOST_OVERRIDE("_ZN2nn5codec18FinalizeVp9DecoderEPNS0_14Vp9DecoderTypeE", ov_vp9_fini);
 HOST_OVERRIDE("_ZN2nn5codec15StartVp9DecoderEPNS0_14Vp9DecoderTypeE", ov_ok);
 HOST_OVERRIDE("_ZN2nn5codec14StopVp9DecoderEPNS0_14Vp9DecoderTypeE", ov_ok);
@@ -532,11 +574,14 @@ HOST_OVERRIDE("_ZN2nn5codec24RegisterVp9DecoderBufferEPNS0_14Vp9DecoderTypeEjPNS
               ov_vp9_register);
 HOST_OVERRIDE("_ZN2nn5codec26InitializeDecoderImagePoolEPNS0_25VideoDecoderImagePoolTypeEPvmRKNS0_27VideoDecoderImage"
               "PreferenceEjNS0_9CodecModeE", ov_pool_init);
+HOST_OVERRIDE("_ZN2nn5codec26InitializeDecoderImagePoolEPNS0_25VideoDecoderImagePoolTypeEPvmRKNS0_27VideoDecoderImage"
+              "PreferenceEj", ov_pool_init);
 HOST_OVERRIDE("_ZN2nn5codec24FinalizeDecoderImagePoolEPNS0_25VideoDecoderImagePoolTypeE", ov_ok);
 HOST_OVERRIDE("_ZN2nn5codec31CalculateDecoderImagePoolBufferEPmS1_RKNS0_27VideoDecoderImagePreferenceEj", ov_calc_size);
 HOST_OVERRIDE("_ZN2nn5codec29CalculateVp9DecoderWorkBufferEPmS1_mtt", ov_calc_size);
 HOST_OVERRIDE("_ZN2nn5codec33GetVp9DecoderSubmissionReadyEventEPPNS_2os15SystemEventTypeEPNS0_14Vp9DecoderTypeE",
               ov_vp9_ready_event);
+HOST_OVERRIDE("_ZN2nn5codec33GetVp9DecoderSubmissionReadyEventEPNS0_14Vp9DecoderTypeE", ov_vp9_ready_event_ret);
 HOST_OVERRIDE("_ZN2nn5codec27SubmitVp9DecoderInputBufferEPmPNS0_14Vp9DecoderTypeEPKvmNS_8TimeSpanEb", ov_vp9_submit);
 HOST_OVERRIDE("_ZN2nn5codec29AcquireVp9DecoderOutputBufferEPjPNS_2gs16NativeSyncHandleEPNS0_14Vp9DecoderTypeE",
               ov_vp9_acquire);
