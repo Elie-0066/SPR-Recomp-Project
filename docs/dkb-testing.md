@@ -88,7 +88,7 @@ that frame. A shot is for your own debugging; do not post it if it shows game co
 
 ## What to report
 
-SPR Recomp is a private fork: report to its maintainer, not to the DKB Recomp or TotK Recomp issue trackers. Include:
+Open an issue on the [SPR Recomp tracker](https://github.com/Elie-0066/SPR-Recomp-Project/issues), not on the DKB Recomp or TotK Recomp trackers. Include:
 
 - the commit you built (`git rev-parse --short HEAD`);
 - GPU, driver version and Windows version;

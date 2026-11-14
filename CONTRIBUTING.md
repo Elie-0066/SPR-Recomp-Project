@@ -1,8 +1,8 @@
 # Contributing
 
-SPR Recomp is a private fork of [DKB Recomp](https://github.com/Lucas-blip-png/dkb-pc-recomp) whose target is
-*Splatoon Raiders*. Work on it goes through its maintainer; issues about Raiders do not belong on the DKB Recomp or TotK
-Recomp trackers. A fix to the shared code that would also help those projects can be offered to them separately, under
+SPR Recomp is a fork of [DKB Recomp](https://github.com/Lucas-blip-png/dkb-pc-recomp) whose target is
+*Splatoon Raiders*. Issues and pull requests about Raiders go to [this repository](https://github.com/Elie-0066/SPR-Recomp-Project); they do not belong on the
+DKB Recomp or TotK Recomp trackers. A fix to the shared code that would also help those projects can be offered to them separately, under
 their rules.
 
 ## Where to start
@@ -36,7 +36,7 @@ The rules are in [AGENTS.md](AGENTS.md), "Reusing code". In short: the repositor
 
 ## Reporting bugs
 
-Report to the maintainer. Include the commit you built (`git rev-parse --short HEAD`), your GPU, driver and Windows version, the log (`logs\dkb.log` in the build folder, next to `spr-recomp.exe`; after a crash, copy it before you start the game again), and the steps to reproduce. Describe what you see instead of attaching screenshots of the game. [docs/dkb-testing.md](docs/dkb-testing.md) covers building, running and the useful settings.
+Open an issue on [this repository](https://github.com/Elie-0066/SPR-Recomp-Project/issues) with the matching template. Include the commit you built (`git rev-parse --short HEAD`), your GPU, driver and Windows version, the log (`logs\dkb.log` in the build folder, next to `spr-recomp.exe`; after a crash, copy it before you start the game again), and the steps to reproduce. Describe what you see instead of attaching screenshots of the game. [docs/dkb-testing.md](docs/dkb-testing.md) covers building, running and the useful settings.
 
 ## Pull requests
 

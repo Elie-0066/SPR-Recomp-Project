@@ -5,8 +5,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        DKB Recomp is not playable yet, so crashes are expected. A good report still helps: it shows where the next problem is.
-        Check the pinned issues first, and see [docs/dkb-testing.md](https://github.com/Lucas-blip-png/dkb-pc-recomp/blob/bananza/docs/dkb-testing.md) for how to run and where the log is.
+        SPR Recomp is early work, so crashes are expected. A good report still helps: it shows where the next problem is.
+        Check the pinned issues first, and see [docs/dkb-testing.md](https://github.com/Elie-0066/SPR-Recomp-Project/blob/raiders/docs/dkb-testing.md) for how to run and where the log is.
 
         Do not attach or link game files, keys, firmware, builds, shader caches or screenshots of the game. Issues that do are closed.
   - type: checkboxes
@@ -14,13 +14,13 @@ body:
     attributes:
       label: Existing issues
       options:
-        - label: I read the pinned issues and [searched open and closed issues](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues?q=is%3Aissue) for this crash.
+        - label: I read the pinned issues and [searched open and closed issues](https://github.com/Elie-0066/SPR-Recomp-Project/issues?q=is%3Aissue) for this crash.
           required: true
   - type: input
     id: version
     attributes:
       label: Commit
-      description: The commit you built, from `git rev-parse --short HEAD`. The game must be base version 1.0.0.
+      description: The commit you built, from `git rev-parse --short HEAD`. Update 65536 is the only tested version; say if you used another one.
     validations:
       required: true
   - type: input
@@ -37,9 +37,10 @@ body:
       options:
         - At startup, before any picture
         - Before or on the title screen
-        - Loading into the tutorial cave
-        - In the tutorial cave
-        - During or right after a guide movie
+        - During the opening cutscene
+        - In the character creator
+        - In the hub
+        - Loading into or playing the first zone
         - Further into the game
     validations:
       required: true
@@ -64,6 +65,6 @@ body:
     id: log
     attributes:
       label: Log
-      description: Attach logs\dkb.log from the folder of dkb.exe. Copy it before you start the game again, because the next start renames it.
+      description: Attach logs\dkb.log from the folder of spr-recomp.exe. Copy it before you start the game again, because the next start renames it.
     validations:
       required: true

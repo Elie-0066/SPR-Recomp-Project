@@ -44,6 +44,17 @@ keys, extracted assets, generated game code, or derived shader files to commits,
 belong in the ignored `config.local.toml`; generated and extracted files belong under ignored `build/` or `generated/`.
 Instructions for obtaining game files are not provided.
 
+## Requirements
+
+- Windows 10 or 11 on an x86-64 CPU with AVX2. Linux and macOS are not supported.
+- A GPU with Vulkan 1.3 and a current driver (tested on NVIDIA only).
+- 16 GB of RAM plus a large page file (the process commits about 11 GB); 32 GB is comfortable.
+- About 6 GB free for the build, besides the dump.
+- Your own dump of *Splatoon Raiders* update 65536, as a `.nup` file or as extracted ExeFS and RomFS folders. No keys are
+  needed.
+- To build from source: the toolchain in [docs/building.md](docs/building.md) (MSYS2 UCRT64 Clang, Ninja, Visual
+  Studio Build Tools, Python 3.12 and 3.14, the .NET SDK for the shader translator).
+
 ## Install
 
 The setup builds the game in one go from a `.nup` file or the extracted update folders, identifies the dump's version first
@@ -70,6 +81,32 @@ in place, so it does not need to be repacked into a second multi-gigabyte image.
 ```powershell
 build\raiders\spr-recomp.exe --boot
 ```
+
+Running, settings and logs are covered in [docs/dkb-testing.md](docs/dkb-testing.md); controls in
+[docs/controls.md](docs/controls.md).
+
+## Reporting problems and contributing
+
+Bugs go to the [issue tracker](https://github.com/Elie-0066/SPR-Recomp-Project/issues), with the template that fits: the commit you built, your GPU, driver and
+Windows version, the log (`logs\dkb.log` next to `spr-recomp.exe`) and the steps to reproduce. Never attach game files,
+keys, builds, shader caches or screenshots of the game. Issues about Raiders do not belong on the DKB Recomp or TotK
+Recomp trackers.
+
+Pull requests are welcome; read [CONTRIBUTING.md](CONTRIBUTING.md) first, and enable the content check before your first
+commit:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Credits
+
+SPR Recomp stands on the work of [DKB Recomp](https://github.com/Lucas-blip-png/dkb-pc-recomp) and
+[TotK Recomp](https://github.com/valentderah/totk-pc-recomp) and their contributors, whose commits and authors are kept
+in this repository's history, and on the projects listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), among them
+LAS Recomp, MacNativeGames, Eglantine (Eden), Ryujinx, Dear ImGui and SDL.
 
 ## Origins and licenses
 

@@ -1,4 +1,4 @@
-SPR Recomp: a static recompilation of *Splatoon Raiders* (Switch 2) to a native Windows exe with a Vulkan renderer. It is a private, experimental fork of DKB Recomp (itself built on TotK Recomp), and no release has been made yet.
+SPR Recomp: a static recompilation of *Splatoon Raiders* (Switch 2) to a native Windows exe with a Vulkan renderer. It is an experimental fork of DKB Recomp (itself built on TotK Recomp).
 
 **A release would hold no game data.** You build the game on your own PC from your own dump, given as a `.nup` file or as an ExeFS folder and a complete RomFS folder.
 
@@ -18,4 +18,4 @@ SPR Recomp: a static recompilation of *Splatoon Raiders* (Switch 2) to a native 
 
 ## Reporting a bug
 
-Report to the maintainer with the log (`logs\dkb.log` next to `spr-recomp.exe`), the commit you built, your GPU and driver, and what you did before it failed. **Never share generated files, keys, builds or screenshots that show game content.**
+Open an issue on https://github.com/Elie-0066/SPR-Recomp-Project/issues with the log (`logs\dkb.log` next to `spr-recomp.exe`), the commit you built, your GPU and driver, and what you did before it failed. **Never share generated files, keys, builds or screenshots that show game content.**

@@ -13,7 +13,7 @@ body:
     attributes:
       label: Existing issues
       options:
-        - label: I read the pinned issues and [searched open and closed issues](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues?q=is%3Aissue) for this bug.
+        - label: I read the pinned issues and [searched open and closed issues](https://github.com/Elie-0066/SPR-Recomp-Project/issues?q=is%3Aissue) for this bug.
           required: true
   - type: dropdown
     id: area
@@ -54,4 +54,4 @@ body:
     id: log
     attributes:
       label: Log
-      description: Attach logs\dkb.log from the folder of dkb.exe, if the game started.
+      description: Attach logs\dkb.log from the folder of spr-recomp.exe, if the game started.

@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Known glitches are tracked in the pinned [roadmap](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues/10) (for example the empty colour grading LUT and the checkerboard textures).
+        Known glitches are tracked in the [roadmap](https://github.com/Elie-0066/SPR-Recomp-Project/blob/raiders/docs/raiders-plan.md).
 
         Do not attach or link game files, keys, firmware, builds, shader caches or screenshots of the game. Describe what you see instead. Issues that break this are closed.
   - type: checkboxes
@@ -13,7 +13,7 @@ body:
     attributes:
       label: Existing issues
       options:
-        - label: I read the roadmap and [searched open and closed issues](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues?q=is%3Aissue) for this glitch.
+        - label: I read the roadmap and [searched open and closed issues](https://github.com/Elie-0066/SPR-Recomp-Project/issues?q=is%3Aissue) for this glitch.
           required: true
   - type: input
     id: version
@@ -39,6 +39,6 @@ body:
     id: log
     attributes:
       label: Log
-      description: Attach logs\dkb.log from the folder of dkb.exe. Lines with "validation", "shader" or "nvn2" are the interesting ones.
+      description: Attach logs\dkb.log from the folder of spr-recomp.exe. Lines with "validation", "shader" or "nvn2" are the interesting ones.
     validations:
       required: true
