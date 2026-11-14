@@ -10,7 +10,8 @@ The runtime and most settings below come from DKB Recomp and TotK Recomp; settin
 
 - Windows 10 or 11 on an x86-64 CPU with AVX2.
 - 16 GB of RAM plus a large page file (32 GB is comfortable): the process commits about 11 GB in the first gameplay zone.
-- A GPU with Vulkan 1.3 and a current driver (tested on an RTX 3050).
+- A GPU with Vulkan 1.3 and a current driver (tested on an RTX 3050). AMD GPUs have not been tested: whether they
+  work is unknown, and a report from an AMD owner, working or not, helps.
 - About 6 GB free for the build, besides the space your dump takes.
 - *Splatoon Raiders* update 65536, dumped from your own Switch 2: the update's ExeFS and the merged RomFS as folders, or
   a `.nup` file. Update 65536 is the tested version; the installer also builds the base game and other updates, with a

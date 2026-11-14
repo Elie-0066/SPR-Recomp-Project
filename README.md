@@ -49,13 +49,24 @@ Instructions for obtaining game files are not provided.
 ## Requirements
 
 - Windows 10 or 11 on an x86-64 CPU with AVX2. Linux and macOS are not supported.
-- A GPU with Vulkan 1.3 and a current driver (tested on NVIDIA only).
+- A GPU with Vulkan 1.3 and a current driver. Tested on NVIDIA only; see [AMD graphics cards](#amd-graphics-cards).
 - 16 GB of RAM plus a large page file (the process commits about 11 GB); 32 GB is comfortable.
 - About 6 GB free for the build, besides the dump.
 - Your own dump of *Splatoon Raiders* update 65536, as a `.nup` file or as extracted ExeFS and RomFS folders. No keys are
   needed.
 - To build from source: the toolchain in [docs/building.md](docs/building.md) (MSYS2 UCRT64 Clang, Ninja, Visual
   Studio Build Tools, Python 3.12 and 3.14, the .NET SDK for the shader translator).
+
+### AMD graphics cards
+
+Whether SPR Recomp runs on AMD (Radeon) GPUs is **unknown**. Every test so far was on an NVIDIA RTX 3050, and the
+maintainer has no machine with an AMD GPU to test on for now. The renderer only uses standard Vulkan, so it may work,
+but the upstream projects saw AMD-specific problems (DKB Recomp had a device loss on AMD only), and some workarounds in
+this code are tuned for NVIDIA's driver.
+
+If you have an AMD card, a report is very welcome either way: open an
+[issue](https://github.com/Elie-0066/SPR-Recomp-Project/issues) with your GPU, driver version, how far the game got
+and the log (`logs\dkb.log`), even if everything works.
 
 ## Install
 

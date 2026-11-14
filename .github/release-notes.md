@@ -12,7 +12,7 @@ SPR Recomp: a static recompilation of *Splatoon Raiders* (Switch 2) to a native 
 
 ## Requirements (Windows)
 
-- A GPU with Vulkan 1.3 and a recent driver; tested on NVIDIA only.
+- A GPU with Vulkan 1.3 and a recent driver; tested on NVIDIA only. **AMD support is unknown**: no AMD GPU has been tested yet, and reports from AMD owners, working or not, are welcome.
 - 16 GB of RAM plus a large page file (the process commits about 11 GB), 32 GB is comfortable.
 - About 6 GB free for the build, besides the dump.
 
