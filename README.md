@@ -13,6 +13,8 @@ Switch services and answers NVN 2 graphics calls through Vulkan.
 **This project is not affiliated with or endorsed by Nintendo. It contains no game code or data: you need your own
 copy of the game, and the executable you build from it is for your own use only. Do not share builds.**
 
+(This is also HEAVILY Vibecoded just so you know, if there is any problem let me know)
+
 ## Status
 
 **Early, playable in parts.** The title, the opening cutscene, the character creator, the hub and the first gameplay
