@@ -3,8 +3,11 @@
 The flow is Bananza's (installer/bananza.py), whose path checks, locks, translator step, host check and tool runner it
 reuses. What differs for this game:
 
-- One supported ExeFS, update title version 65536 (tools/data/expected-raiders.json), with three modules: main, sdk
-  and subsdk0, lifted whole and without patch sets.
+- The ExeFS has three modules, main, sdk and subsdk0, lifted whole and without patch sets. Update 65536
+  (tools/data/expected-raiders.json) is the version the project is developed and tested on. The other versions of
+  tools/data/expected-raiders-*.json, and any other version whose main.npdm (or .nup package) carries the game's
+  program id, are built too, with the warning warn.spr_version_experimental: nothing says the lifter or the runtime
+  handles them. The executable is pinned to the ExeFS it was built from either way.
 - The runtime reads the RomFS as a loose folder (tools/romfs_index.py indexes it in place), so nothing is packed. A
   RomFS folder is used where it is and recorded in the executable; a .nup is extracted loose into <dest>/romfs, the
   base RomFS with the update's laid over it as Eglantine runs it (tools/extract_nup.py --select latest).
@@ -19,6 +22,7 @@ import json
 import os
 import shutil
 import signal
+import struct
 import tempfile
 import time
 from dataclasses import replace
@@ -37,6 +41,7 @@ OWNER = '.spr-setup-owner.json'
 DEST_OWNER = '.spr-install-owner.json'
 EXE_NAME = 'spr-recomp' + B.EXE
 MODULES = ('main', 'sdk', 'subsdk0')
+EXEFS_FILES = ('main', 'main.npdm', 'rtld', 'sdk', 'subsdk0')
 NUP_PART = '.setup-nup'   # the .nup is extracted here, inside the install folder, then renamed into place
 # Work space beyond the RomFS: about 1.3 GB of generated C, 0.4 GB of objects, the 300 MB executable, the shader and
 # pipeline caches.
@@ -62,19 +67,58 @@ def uses_msys2(layout):
     return os.name == 'nt' and layout.llvm.resolve() == layouts.UCRT.parent.resolve()
 
 
-def expected(layout):
-    return json.loads((layout.tools / 'data' / f'expected-{GAME}.json').read_text(encoding='utf-8'))
+def known_versions(layout):
+    """The records of tools/data/expected-raiders.json (the tested update) and expected-raiders-*.json."""
+    return [json.loads(p.read_text(encoding='utf-8'))
+            for p in sorted((layout.tools / 'data').glob(f'expected-{GAME}*.json'))]
 
 
-def check_exefs(layout, exefs):
-    """The SHA-256 of every ExeFS file the supported update records; any other dump stops here."""
-    hashes = expected(layout)['exefs_sha256']
+def program_id(layout):
+    """The game's program id, from the tested version's record."""
+    return int(json.loads((layout.tools / 'data' / f'expected-{GAME}.json').read_text(encoding='utf-8'))['title_id'], 16)
+
+
+def npdm_program_id(data):
+    """The program id of a main.npdm: META header, ACI0 offset and size at 0x70, the id at ACI0+0x10. None if malformed."""
+    if len(data) < 0x78 or data[:4] != b'META':
+        return None
+    offset, size = struct.unpack_from('<II', data, 0x70)
+    if size < 0x18 or offset + 0x18 > len(data) or data[offset:offset + 4] != b'ACI0':
+        return None
+    return struct.unpack_from('<Q', data, offset + 0x10)[0]
+
+
+def identify(layout, hashes, title_version=None, display=None):
+    """The version record whose five ExeFS hashes all match, else one made from the hashes: an unknown version of the
+    game. 'verified' is true for the tested update only; build_game.py reads display_version for the settings menu."""
+    for record in known_versions(layout):
+        if record['exefs_sha256'] == {name: hashes.get(name) for name in record['exefs_sha256']}:
+            return {k: v for k, v in record.items() if k != '_comment'}
+    if display is None:
+        display = f'title version {title_version}' if title_version is not None else 'unknown version'
+    return {'title_id': f'{program_id(layout):016x}', 'display_version': display, 'title_version': title_version,
+            'verified': False, 'exefs_sha256': dict(hashes)}
+
+
+def exefs_folder_hashes(exefs):
+    """The SHA-256 of the five ExeFS files of a folder."""
+    hashes = {}
+    for name in EXEFS_FILES:
+        p = exefs / name
+        B.ensure_plain(p)
+        if not p.is_file():
+            raise InstallError('spr.exefs_invalid', path=str(p))
+        hashes[name] = B.sha256(p)
+    return hashes
+
+
+def check_exefs(exefs, hashes):
+    """Every ExeFS file has the SHA-256 preflight recorded."""
     for name, value in hashes.items():
         p = exefs / name
         B.ensure_plain(p)
         if not p.is_file() or B.sha256(p) != value:
             raise InstallError('spr.exefs_invalid', path=str(p))
-    return hashes
 
 
 def romfs_listing(root):
@@ -91,26 +135,26 @@ def romfs_ok(root):
     return (root / 'Shader').is_dir()
 
 
-def nup_source(layout, path):
-    """The ExeFS hashes and the RomFS size of a .nup, from its table of contents alone (nothing is decompressed)."""
+def nup_source(layout, path, select):
+    """The version record, the RomFS listing and its size of a .nup, from its table of contents alone (nothing is
+    decompressed). select is extract_nup.py's --select: latest (the newest update over the base) or base."""
     tool = B.tool_module(layout, 'extract_nup.py')
     try:
         container = tool.Nup(path)
     except (tool.NupError, OSError, ValueError, UnicodeDecodeError) as e:
         raise InstallError('dkb.nup_invalid', path=str(path), detail=str(e)) from None
     try:
-        plan = tool.install_plan(container, 'latest')
+        plan = tool.install_plan(container, select)
         exefs = {'/'.join(parts): idx for parts, idx in tool.merged_entries(container, [plan['exefs']], 'exefs')}
         romfs = tool.merged_entries(container, plan['romfs'], 'romfs')
         package = plan['exefs']
-        recorded = lambda name: container.files[exefs[name]][4].hex() if name in exefs else None
-        hashes = expected(layout)['exefs_sha256']
-        if recorded('main') != hashes['main']:
-            raise InstallError('spr.nup_version', path=str(path), version=package.display_version or str(package.version),
-                               title_version=package.version)
-        for name, value in hashes.items():
-            if recorded(name) != value:
-                raise InstallError('spr.exefs_invalid', path=f'{path} (exefs/{name})')
+        if package.title_id & ~0xFFF != program_id(layout):   # an update's id is the base's plus 0x800
+            raise InstallError('spr.wrong_game', path=str(path))
+        missing = [name for name in EXEFS_FILES if name not in exefs]
+        if missing:
+            raise InstallError('spr.exefs_invalid', path=f'{path} (exefs/{missing[0]})')
+        hashes = {name: container.files[exefs[name]][4].hex() for name in EXEFS_FILES}
+        version = identify(layout, hashes, package.version, package.display_version or None)
         if not romfs:
             raise InstallError('dkb.romfs_empty', path=f'{path} (romfs)')
         size = sum(container.files[idx][1] for _, idx in romfs)
@@ -125,7 +169,7 @@ def nup_source(layout, path):
                                  capture_output=True, text=True)
         if probe.returncode:
             raise InstallError('dkb.nup_zstd', path=str(path))
-    return hashes, listing, size
+    return version, listing, size
 
 
 def plain_destination(dest, dlls=()):
@@ -148,8 +192,6 @@ def preflight(layout, options, dest, temp, rep):
         raise InstallError('dkb.jobs')
     if options.lang and ini.canonical_language(options.lang) not in ini.LANGUAGES:
         raise InstallError('ui.need_lang')
-    if getattr(options, 'nup_package', None) not in (None, 'latest'):
-        raise InstallError('spr.nup_base_unsupported')
     B.ensure_plain(dest / STATE)
     old = statefile.load(dest, STATE)
     if old is not None and (old.get('game') != GAME or old.get('destination') != str(dest)):
@@ -167,8 +209,9 @@ def preflight(layout, options, dest, temp, rep):
         nup = nup_arg.resolve()
         if not nup.is_file():
             raise InstallError('dkb.need_nup')
-        hashes, listing, romfs_size = nup_source(layout, nup)
-        inputs, sources = (nup,), {'nup': str(nup)}
+        select = getattr(options, 'nup_package', None) or recorded.get('nup_package') or 'latest'
+        version, listing, romfs_size = nup_source(layout, nup, select)
+        inputs, sources = (nup,), {'nup': str(nup), 'nup_package': select}
         romfs_dir = dest / 'romfs'
     else:
         exefs_arg = options.exefs or (Path(recorded['exefs']) if recorded.get('exefs') else None)
@@ -182,7 +225,14 @@ def preflight(layout, options, dest, temp, rep):
             raise InstallError('spr.need_folders')
         if not romfs_ok(romfs):
             raise InstallError('spr.romfs_invalid', path=str(romfs))
-        hashes = check_exefs(layout, exefs)
+        hashes = exefs_folder_hashes(exefs)
+        try:
+            game = npdm_program_id((exefs / 'main.npdm').read_bytes())
+        except OSError:
+            game = None
+        if game != program_id(layout):
+            raise InstallError('spr.wrong_game', path=str(exefs / 'main.npdm'))
+        version = identify(layout, hashes)
         listing, romfs_size = romfs_listing(romfs), 0   # read in place: no copy on the install disk
         inputs, sources = (exefs, romfs), {'exefs': str(exefs), 'romfs': str(romfs)}
         romfs_dir = romfs
@@ -215,6 +265,8 @@ def preflight(layout, options, dest, temp, rep):
             raise InstallError('dkb.temp_unrelated', path=str(temp))
     B.plain_tree(temp)
     plain_destination(dest, layout.dlls)
+    if not version.get('verified'):
+        rep.warning('warn.spr_version_experimental', version=version['display_version'])
     missing = [p for p in (layout.clang, layout.ninja, layout.recomp / 'gen.py', layout.tools / 'shader_census.py',
                            layout.tools / 'romfs_index.py', layout.tools / 'build_game.py',
                            *([layout.tools / 'extract_nup.py'] if nup_arg else []),
@@ -246,7 +298,7 @@ def preflight(layout, options, dest, temp, rep):
         if proc is None or proc.returncode or not any(line.startswith('10.') for line in proc.stdout.splitlines()):
             raise InstallError('dkb.dotnet_missing')
     # Check (B.Check) sizes the space from romfs_size: a .nup's RomFS is written to the install folder, a folder's is not.
-    return dict(old=old, game=GAME, sources=sources, hashes=hashes, romfs_id=B.digest(listing), romfs_size=romfs_size,
+    return dict(old=old, game=GAME, sources=sources, version=version, hashes=version['exefs_sha256'], romfs_id=B.digest(listing), romfs_size=romfs_size,
                 romfs_files=len(listing), romfs_dir=str(romfs_dir), owner=owner, translator=translator,
                 identity=identity, dotnet=dotnet,
                 pipeline=B.digest(*(B.sha256(Path(__file__).with_name(n))
@@ -303,14 +355,14 @@ class Data(Step):
     id = 'dkb_data'
 
     def key(self, ctx):
-        parts = [ctx.info['hashes'], ctx.info['romfs_id'], ctx.info['pipeline']]
+        parts = [ctx.info['hashes'], ctx.info['romfs_id'], ctx.info['pipeline'], ctx.info['version']['display_version']]
         if 'nup' in ctx.info['sources']:
             parts.append(B.sha256(ctx.layout.tools / 'extract_nup.py'))
         return B.digest(*parts)
 
     def current(self, ctx, record):
         try:
-            check_exefs(ctx.layout, ctx.dest / 'exefs')
+            check_exefs(ctx.dest / 'exefs', ctx.info['hashes'])
             romfs = Path(ctx.info['romfs_dir'])
             return romfs_ok(romfs) and record.get('romfs_files') == ctx.info['romfs_files']
         except (OSError, InstallError):
@@ -327,8 +379,8 @@ class Data(Step):
                 B.plain_tree(part)
                 shutil.rmtree(part)
             run_tool(ctx, self.id, [ctx.layout.python, ctx.layout.tools / 'extract_nup.py', sources['nup'],
-                                    '--select', 'latest', '--out', part])
-            check_exefs(ctx.layout, part / 'exefs')
+                                    '--select', sources['nup_package'], '--out', part])
+            check_exefs(part / 'exefs', ctx.info['hashes'])
             listing = romfs_listing(part / 'romfs')
             if B.digest(listing) != ctx.info['romfs_id']:
                 raise InstallError('dkb.input_changed', path=sources['nup'])
@@ -346,7 +398,7 @@ class Data(Step):
                 raise InstallError('dkb.input_changed', path=str(romfs))
         for name in ctx.info['hashes']:
             B.copy_file(exefs / name, ctx.dest / 'exefs' / name)
-        check_exefs(ctx.layout, ctx.dest / 'exefs')
+        check_exefs(ctx.dest / 'exefs', ctx.info['hashes'])
         if 'nup' in sources:
             shutil.rmtree(ctx.dest / NUP_PART)
         return {'romfs_files': ctx.info['romfs_files']}
@@ -399,8 +451,12 @@ class Compile(Step):
 
     def run(self, ctx):
         out = ctx.temp / 'build'
-        args = [ctx.layout.python, ctx.layout.tools / 'build_game.py', '--version', GAME, '--expected',
-                ctx.layout.tools / 'data' / f'expected-{GAME}.json', '--gen', ctx.temp / 'gen', '--out', out,
+        # The version record preflight identified: build_game.py pins the executable to its hashes and shows its
+        # display_version. Written to the temp folder, since an unknown version has no file under tools/data.
+        expected = ctx.temp / f'expected-{GAME}.json'
+        B.ensure_plain(expected)
+        expected.write_text(json.dumps(ctx.info['version'], indent=2) + '\n', encoding='utf-8')
+        args = [ctx.layout.python, ctx.layout.tools / 'build_game.py', '--version', GAME, '--expected', expected, '--gen', ctx.temp / 'gen', '--out', out,
                 '--exefs', ctx.dest / 'exefs', '--romfs', ctx.info['romfs_dir'], '--profile', ctx.dest / 'profile',
                 '--runtime', ctx.layout.runtime, '--ninja', ctx.layout.ninja, '--jobs', ctx.options.jobs, '--full-build']
         if not uses_msys2(ctx.layout):   # MSYS2 UCRT64 is build_game.py's default toolchain (msys2_layout)

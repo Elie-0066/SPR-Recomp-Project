@@ -24,10 +24,12 @@ MacNativeGames cannot run on x86-64 as is: its CPU path executes ARM64 code nati
 
 ### 1. Input
 
-- *Splatoon Raiders* update 65536 (title `0400380020056000`), from the user's own dump: the update's ExeFS and the merged
-  RomFS as extracted folders, or a `.nup` file (`tools/extract_nup.py`). No keys are needed.
-- Verification: the SHA-256 of the five ExeFS files in `tools/data/expected-raiders.json`; the installer and the built
-  executable refuse any other ExeFS.
+- *Splatoon Raiders* (title `0400380020056000`), from the user's own dump: an ExeFS and the merged RomFS as extracted
+  folders, or a `.nup` file (`tools/extract_nup.py`). No keys are needed. Update 65536 is the tested version; the base
+  game and other updates are built too, as experimental versions ([installer.md](installer.md)).
+- Verification: the installer identifies the version by the SHA-256 of the five ExeFS files
+  (`tools/data/expected-raiders*.json`, or none for an unknown version) and the built executable refuses any ExeFS but
+  the one it was built from.
 - The RomFS stays a loose folder: `tools/romfs_index.py` indexes it in place (46,350 files) instead of packing a second
   multi-gigabyte image.
 - Inherited inputs: TotK Recomp reads TotK 1.0.0 to 1.4.3 from NSP or XCI with the console's keys, through

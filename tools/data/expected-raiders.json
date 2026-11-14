@@ -1,8 +1,9 @@
 {
-  "_comment": "Splatoon Raiders ExeFS of update title version 65536 (the first update), the version generated/raiders is lifted from. Hashes only; no game data. The installer (installer/raiders.py) accepts only this ExeFS, and tools/build_game.py --version raiders links an executable that refuses any other.",
+  "_comment": "Splatoon Raiders ExeFS of update title version 65536 (the first update), the version generated/raiders is lifted from and the only one SPR Recomp is tested on. Hashes only; no game data. The installer (installer/raiders.py) also accepts the other versions of expected-raiders-*.json and unknown versions of the game, with a warning that they are experimental. tools/build_game.py --version raiders links an executable that refuses any ExeFS but the one it was built for.",
   "title_id": "0400380020056000",
   "display_version": "update 65536",
   "title_version": 65536,
+  "verified": true,
   "exefs_sha256": {
     "main": "35fe1cbe7ea983e1e6ce8716b98e884a2f6cfb02c9514d51ec2c00daa4addcde",
     "main.npdm": "4ffe5f24a7b37bfe36ce3aea2d9b39d7830ebb54fa5ca968913dc80178ec5534",

@@ -1,6 +1,8 @@
 SPR Recomp: a static recompilation of *Splatoon Raiders* (Switch 2) to a native Windows exe with a Vulkan renderer. It is a private, experimental fork of DKB Recomp (itself built on TotK Recomp), and no release has been made yet.
 
-**A release would hold no game data.** You build the game on your own PC from your own dump of **update 65536**, given as a `.nup` file or as the update's ExeFS and a merged RomFS folder. Other versions are not supported; the setup checks the ExeFS hashes first.
+**A release would hold no game data.** You build the game on your own PC from your own dump, given as a `.nup` file or as an ExeFS folder and a complete RomFS folder.
+
+**Game versions: update 65536 is the only tested version.** The base game (1.0.0) and other updates are accepted, but their support is **experimental**: nothing says they build, start or play correctly, and the setup warns when it sees one. Please check a problem on update 65536 before reporting it.
 
 ## State
 

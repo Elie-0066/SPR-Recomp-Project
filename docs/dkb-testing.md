@@ -13,8 +13,8 @@ The runtime and most settings below come from DKB Recomp and TotK Recomp; settin
 - A GPU with Vulkan 1.3 and a current driver (tested on an RTX 3050).
 - About 6 GB free for the build, besides the space your dump takes.
 - *Splatoon Raiders* update 65536, dumped from your own Switch 2: the update's ExeFS and the merged RomFS as folders, or
-  a `.nup` file. The installer checks the ExeFS against `tools/data/expected-raiders.json` and refuses any other
-  version. This project does not explain how to dump the game.
+  a `.nup` file. Update 65536 is the tested version; the installer also builds the base game and other updates, with a
+  warning that their support is experimental. This project does not explain how to dump the game.
 
 ## Build
 

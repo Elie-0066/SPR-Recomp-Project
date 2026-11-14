@@ -1,0 +1,14 @@
+{
+  "_comment": "Splatoon Raiders base game ExeFS (title version 0). Hashes only; no game data. Experimental: SPR Recomp is developed and tested on update 65536 (expected-raiders.json); the installer accepts this version with a warning, and it has never been built or run.",
+  "title_id": "0400380020056000",
+  "display_version": "1.0.0 (base)",
+  "title_version": 0,
+  "verified": false,
+  "exefs_sha256": {
+    "main": "b8164900cbe4f347ba2008136e1864f07c6c466a82c117f81c62d74858003603",
+    "main.npdm": "e932a0c460435e73d247f7e2e40b8c74f6d67ca6918ba63c36de9550cee766e1",
+    "rtld": "87c39fd59d4d6a763b63ec39e1fab3662f084e49e0b12aad235ff85b8a866772",
+    "sdk": "f306d21b0507dce55bd5c8c9a9fa48ffbf11f3cdc246c9fe78079895241546c9",
+    "subsdk0": "976e2076159e90775ba6d759f33a4f0ddc38fe887349787c4235bed69e63ab1f"
+  }
+}

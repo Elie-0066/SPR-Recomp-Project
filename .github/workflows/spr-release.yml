@@ -1,0 +1,55 @@
+name: SPR setup zip
+
+# Builds SPR-Setup-<version>-windows.zip (the portable tools, the source and the installer GUI, tools/make_release.py
+# --game raiders), with no game data. A manual run or a push to a tag only uploads the zip as a workflow artifact; a tag
+# named v* also publishes it as a GitHub release with the notes of .github/release-notes.md.
+# There are no Linux or macOS packages: tools/make_release_posix.py builds Bananza's, and SPR Recomp has not been built
+# or run on those systems.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # make_release.py stamps the commit into the version
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v5   # make_release.py installs the installer's wheels with uv
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: python tools/check_content.py
+      - run: python tools/build_xlate.py
+      - run: python tools/make_release.py --game raiders --zip   # also runs check_content over the folder
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SPR-Setup-windows
+          path: build/release/SPR-Setup-*-windows.zip
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [zip]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4   # for .github/release-notes.md
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/SPR-Setup-* --repo "$GITHUB_REPOSITORY" --latest --title "SPR Recomp $GITHUB_REF_NAME" --notes-file .github/release-notes.md --generate-notes

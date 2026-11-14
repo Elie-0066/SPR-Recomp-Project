@@ -19,6 +19,11 @@ copy of the game, and the executable you build from it is for your own use only.
 zone render and play at about 60 fps on the test machine (Ryzen 5 4500, RTX 3050). Known open issue: the game's
 neural-network upscaler is stood in for by FSR 1 EASU.
 
+**Game versions.** Update 65536 is the only version SPR Recomp is developed and tested on. The setup also builds the base
+game (1.0.0) and later updates, but that support is **experimental**: it is not certain that they build, start or play
+correctly. The setup says so with a warning when it sees another version. Report problems on another version only after
+checking them on update 65536.
+
 | Phase | State |
 | --- | --- |
 | Dump intake | Extracted base and update ExeFS/RomFS are read in place; no keys needed. |
@@ -41,8 +46,8 @@ Instructions for obtaining game files are not provided.
 
 ## Install
 
-The setup builds the game in one go from a `.nup` file or the extracted update folders, checks the dump against the
-supported version first, and leaves a ready folder with `spr-recomp.exe` ([docs/installer.md](docs/installer.md)):
+The setup builds the game in one go from a `.nup` file or the extracted update folders, identifies the dump's version first
+(warning when it is not the tested update 65536), and leaves a ready folder with `spr-recomp.exe` ([docs/installer.md](docs/installer.md)):
 
 ```powershell
 .venv\Scripts\python.exe -m installer --game raiders --exefs <update-exefs> --romfs <complete-romfs> --dest <install-folder>

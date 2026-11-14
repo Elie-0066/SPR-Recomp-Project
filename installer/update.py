@@ -7,7 +7,9 @@ import os
 import re
 import urllib.request
 
-API = 'https://api.github.com/repos/Lucas-blip-png/dkb-pc-recomp/releases/latest'
+# This fork's own releases (.github/workflows/spr-release.yml): DKB Recomp's would offer a Bananza installer. While the
+# repository is private the request gets a 404 and the check says nothing.
+API = 'https://api.github.com/repos/Elie-0066/SPR-Recomp-Project/releases/latest'
 TIMEOUT = 3
 
 
@@ -18,7 +20,7 @@ def disabled(flag=False):
 def fetch_latest():
     """The latest release JSON from GitHub (unauthenticated), or None."""
     try:
-        req = urllib.request.Request(API, headers={'User-Agent': 'dkb-installer', 'Accept': 'application/vnd.github+json'})
+        req = urllib.request.Request(API, headers={'User-Agent': 'spr-recomp-installer', 'Accept': 'application/vnd.github+json'})
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             return json.load(r)
     except Exception:

@@ -1,4 +1,5 @@
-"""Command line: python -m installer --game raiders --nup FILE --dest DIR [--package DIR] (SPR Recomp, update 65536)
+"""Command line: python -m installer --game raiders --nup FILE --dest DIR [--package DIR] (SPR Recomp; update 65536 is
+              tested, other versions experimental)
               or python -m installer --game raiders --exefs DIR --romfs DIR --dest DIR [--package DIR]
               or the same with --game bananza (Bananza 1.0.0 or 3.2.0)
 
@@ -61,12 +62,14 @@ def main(argv=None):
     ap.add_argument('--game', choices=('raiders', 'bananza', 'totk'),
                     help='game profile: raiders (SPR Recomp), bananza, totk (.nup and folder inputs without it select '
                          'Bananza, or Raiders for an install folder holding spr-install.json)')
-    ap.add_argument('--nup', type=Path, help='Bananza .nup container (base 1.0.0, with or without update 3.2.0)')
+    ap.add_argument('--nup', type=Path, help='.nup container: Raiders (update 65536 tested, other versions experimental) '
+                                             'or Bananza (base 1.0.0, with or without update 3.2.0)')
     ap.add_argument('--nup-package', choices=('latest', 'base'),
                     help='what to install from the .nup: latest (default: the newest update, as Eglantine runs it) '
-                         'or base (1.0.0 even when the container also holds an update)')
-    ap.add_argument('--exefs', type=Path, help='Bananza 1.0.0 or 3.2.0 ExeFS folder')
-    ap.add_argument('--romfs', type=Path, help='Bananza loose RomFS folder or packed romfs.bin/index.json folder')
+                         'or base (the base game even when the container also holds an update)')
+    ap.add_argument('--exefs', type=Path, help='ExeFS folder: Raiders (any version) or Bananza 1.0.0 or 3.2.0')
+    ap.add_argument('--romfs', type=Path, help='loose RomFS folder (Raiders, Bananza) or Bananza packed '
+                                               'romfs.bin/index.json folder')
     ap.add_argument('--package', type=Path, help='tool package with llvm/, runtime/deps/ and bin/')
     ap.add_argument('--toolchain', type=Path, help='LLVM toolchain directory')
     ap.add_argument('--deps', type=Path, help='build dependency directory with include/ and lib/')

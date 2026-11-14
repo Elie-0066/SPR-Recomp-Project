@@ -27,6 +27,11 @@ The base and the update share the same layout; the update's `main` is 4,801 byte
 larger. The first target is the update (`v65536`), because it is the version users have installed; base 1.0.0 stays as
 a fallback if a regression has to be bisected.
 
+Other versions are experimental. The installer accepts the base (`tools/data/expected-raiders-base.json`) and any later
+update of the game with the warning `warn.spr_version_experimental`; none of them has been lifted, built or run. The
+runtime showed no address tied to 65536 in a search (its Raiders paths key on `rt_game_target` and on shader hashes), so the risks are
+lifter gaps in code the update does not have, and SDK or NVN 2 calls a later update adds.
+
 ## Engine notes
 
 - Nintendo EPD's engine of the Splatoon family: RomFS top level `Phive`, `Gyml`, `AS`, `Banc`, `Mals`, `Logic`,
