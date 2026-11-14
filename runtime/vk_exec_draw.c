@@ -3350,7 +3350,11 @@ static int raiders_upscale(VkExec *ex) {
         {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = 1, .descriptorCount = 1,
          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .pImageInfo = &oi}};
     // The whole input image is the rendered area (see mvk_upscale_cs above), so the view is the image.
-    float pc[8] = {(float)sw, (float)sh, (float)sw, (float)sh, (float)tw, (float)th, 0, 0};
+    // RCAS after EASU, with the same TOTK_SHARPNESS (0..100, 0 = off) the present's FSR pass uses (vk_fsr.c)
+    int sharp = cfg_int("TOTK_SHARPNESS");
+    sharp = sharp < 0 ? 0 : sharp > 100 ? 100 : sharp;
+    float pc[8] = {(float)sw, (float)sh, (float)sw, (float)sh, (float)tw, (float)th, (float)(100 - sharp) / 50.0f,
+                   sharp > 0 ? 1.0f : 0.0f};
     vkCmdBindPipeline(ex->cb, VK_PIPELINE_BIND_POINT_COMPUTE, RU.pipe);
     note_host_pipeline(ex->cb, RU.pipe, 0x5241494445525355ull);   // "RAIDERSU": the upscale stand-in
     rec_push(vk_pipeline_push_fn(), ex->cb, VK_PIPELINE_BIND_POINT_COMPUTE, RU.layout, 0, 2, w);
