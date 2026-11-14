@@ -2,7 +2,7 @@
 // network reads a frame stored sRGB-encoded and ends with the sRGB decode, x < 0.04045 ? x / 12.92 :
 // ((x + 0.055) / 1.055)^2.4, so the passes after it receive linear colour. This shader does the same two things: AMD's
 // EASU (ffx/ffx_a.h and ffx/ffx_fsr1.h, MIT, ffx/LICENSE.txt) scales the encoded frame, where its edge detection is
-// meant to work, then RCAS sharpens it (TOTK_SHARPNESS, as the present does) and the decode writes linear colour. Alpha is the input's, read at the nearest texel.
+// meant to work, then the decode writes linear colour. Alpha is the input's, read at the nearest texel.
 #version 450
 #extension GL_GOOGLE_include_directive : require
 
@@ -13,19 +13,16 @@ layout(set = 0, binding = 1, rgb10_a2) uniform writeonly image2D dst;
 
 layout(push_constant) uniform Params {
     vec4 view;   // input width, input height, input image width, input image height
-    vec4 out_;   // output width, output height, RCAS sharpness in stops, RCAS on (1) or off (0)
+    vec4 out_;   // output width, output height, 0, 0
 } pc;
 
 #define A_GPU 1
 #define A_GLSL 1
 #include "ffx/ffx_a.h"
 #define FSR_EASU_F 1
-#define FSR_RCAS_F 1
 AF4 FsrEasuRF(AF2 p) { return textureGather(src, p, 0); }
 AF4 FsrEasuGF(AF2 p) { return textureGather(src, p, 1); }
 AF4 FsrEasuBF(AF2 p) { return textureGather(src, p, 2); }
-AF4 FsrRcasLoadF(ASU2 p);
-void FsrRcasInputF(inout AF1 r, inout AF1 g, inout AF1 b);
 #include "ffx/ffx_fsr1.h"
 
 vec3 srgb_decode(vec3 x) {
@@ -33,37 +30,23 @@ vec3 srgb_decode(vec3 x) {
     return mix(pow((x + 0.055) / 1.055, vec3(2.4)), x / 12.92, lessThan(x, vec3(0.04045)));
 }
 
-// EASU's result for a 16x16 tile plus a one-pixel border sits in shared memory, so RCAS (a 5-tap cross) reads it without
-// a second dispatch or an intermediate image. The border is computed at clamped positions: RCAS then sees an edge pixel
-// repeated, as the sampler's clamp-to-edge would give it.
-const uint TILE = 18u;
-shared vec3 tile[TILE * TILE];
-
-AF4 FsrRcasLoadF(ASU2 p) { return vec4(tile[uint(p.y) * TILE + uint(p.x)], 1.0); }
-void FsrRcasInputF(inout AF1 r, inout AF1 g, inout AF1 b) {}
+void put(AU2 p, AU4 c0, AU4 c1, AU4 c2, AU4 c3) {
+    if (p.x >= uint(pc.out_.x) || p.y >= uint(pc.out_.y)) return;
+    AF3 c;
+    FsrEasuF(c, p, c0, c1, c2, c3);
+    float a = textureLod(src, (vec2(p) + 0.5) / pc.out_.xy * pc.view.xy / pc.view.zw, 0.0).a;
+    imageStore(dst, ivec2(p), vec4(srgb_decode(c), a));
+}
 
 void main() {
     AU4 c0, c1, c2, c3;
     FsrEasuConOffset(c0, c1, c2, c3, pc.view.x, pc.view.y, pc.view.z, pc.view.w, pc.out_.x, pc.out_.y, 0.0, 0.0);
-    ivec2 org = ivec2(gl_WorkGroupID.xy) * 16;
-    ivec2 last = ivec2(pc.out_.xy) - 1;
-    for (uint i = gl_LocalInvocationID.x; i < TILE * TILE; i += 64u) {
-        ivec2 q = clamp(org + ivec2(int(i % TILE), int(i / TILE)) - 1, ivec2(0), last);
-        AF3 c;
-        FsrEasuF(c, AU2(q), c0, c1, c2, c3);
-        tile[i] = c;
-    }
-    barrier();
-    AU4 con;
-    FsrRcasCon(con, pc.out_.z);   // sharpness in stops of reduction, 0 = the most
-    bool sharpen = pc.out_.w > 0.5;
-    for (uint k = 0u; k < 4u; k++) {
-        AU2 l = ARmp8x8(gl_LocalInvocationID.x) + AU2((k & 1u) << 3u, (k >> 1u) << 3u);
-        ivec2 p = org + ivec2(l);
-        if (p.x > last.x || p.y > last.y) continue;
-        AF3 c = tile[(l.y + 1u) * TILE + l.x + 1u];
-        if (sharpen) FsrRcasF(c.r, c.g, c.b, l + AU2(1u, 1u), con);
-        float a = textureLod(src, (vec2(p) + 0.5) / pc.out_.xy * pc.view.xy / pc.view.zw, 0.0).a;
-        imageStore(dst, p, vec4(srgb_decode(c), a));
-    }
+    AU2 p = ARmp8x8(gl_LocalInvocationID.x) + AU2(gl_WorkGroupID.x << 4u, gl_WorkGroupID.y << 4u);
+    put(p, c0, c1, c2, c3);
+    p.x += 8u;
+    put(p, c0, c1, c2, c3);
+    p.y += 8u;
+    put(p, c0, c1, c2, c3);
+    p.x -= 8u;
+    put(p, c0, c1, c2, c3);
 }
