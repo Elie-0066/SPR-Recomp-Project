@@ -2,12 +2,11 @@
 
 gui.py draws; everything it decides lives here so tests/installer_gui_test.py runs it headless.
 
-    Catalog      text of an id in the window language (installer/text/<lang>.json), English when that lacks it
+    Catalog      text of an id (installer/text/en.json); the window is in English only
     Form         what the player entered; command() and problems() build and check the CLI call
     Model        folds the CLI's JSON events (events.py) into step states, progress, space, errors and the result
     Process      runs `python -m installer ...`, cancels it with Ctrl+Break and feeds lines to a queue
 """
-import ctypes
 import json
 import os
 import queue
@@ -24,7 +23,6 @@ from . import state as statefile
 from .events import render
 
 TEXT = Path(__file__).resolve().parent / 'text'
-UI_LANGUAGES = ('en', 'ru')
 STEP_ORDER = ('check', 'extract', 'lift', 'compile', 'prepare', 'cleanup')
 DKB_STEP_ORDER = ('check', 'dkb_data', 'dkb_translator', 'lift', 'compile', 'dkb_shaders', 'dkb_verify', 'cleanup')
 # The profiles that install from a .nup or ExeFS and RomFS folders, with the step list above (installer/bananza.py,
@@ -34,28 +32,22 @@ GAME_EXES = {'bananza': 'dkb', 'raiders': 'spr-recomp'}
 STATE_FILES = {'bananza': 'dkb-install.json', 'raiders': 'spr-install.json'}
 # message parameter -> catalog id prefix of the names that replace its raw values
 PARAM_NAMES = {'lang': 'lang.', 'known': 'lang.', 'step': 'step.', 'input': 'param.input.'}
-LANG_RU = 0x19   # primary language id of Russian in a Windows LANGID
+DEFAULT_GAME_LANGUAGE = 'en-US'   # the game language the form proposes first
 
 
-def load_texts(lang):
-    path = TEXT / f'{lang}.json'
-    return json.loads(path.read_text(encoding='utf-8')) if path.is_file() else {}
+def load_texts():
+    return json.loads((TEXT / 'en.json').read_text(encoding='utf-8'))
 
 
 class Catalog:
-    """Window text: ids from text/<lang>.json, then text/en.json, then the id itself."""
+    """Window text: ids from text/en.json, else the id itself."""
 
-    def __init__(self, lang='en', game='totk'):
+    def __init__(self, game='totk'):
         self.game = game
-        self.english = load_texts('en')
-        self.set_language(lang)
-
-    def set_language(self, lang):
-        self.lang = lang if lang in UI_LANGUAGES else 'en'
-        self.texts = load_texts(self.lang)
+        self.english = load_texts()
 
     def has(self, id):
-        return id in self.texts or id in self.english
+        return id in self.english
 
     def __call__(self, id, **params):
         # Raiders' own text first (spr.<id>, or spr.<rest> for a dkb.<rest> id), then Bananza's, which it shares.
@@ -65,7 +57,7 @@ class Catalog:
                 id = own
         if self.game in NUP_GAMES and not id.startswith(('dkb.', 'spr.')) and self.has('dkb.' + id):
             id = 'dkb.' + id
-        text = self.texts.get(id) or self.english.get(id)
+        text = self.english.get(id)
         if text is None:
             return id
         values = {k: self.param(k, v) for k, v in params.items()}
@@ -90,22 +82,6 @@ class Catalog:
 
 def flat(value):
     return ', '.join(str(v) for v in value) if isinstance(value, (list, tuple)) else value
-
-
-def windows_ui_language():
-    """'ru' when the display language (Windows; elsewhere LC_ALL, LC_MESSAGES or LANG) is Russian, else 'en'."""
-    if os.name != 'nt':
-        loc = os.environ.get('LC_ALL') or os.environ.get('LC_MESSAGES') or os.environ.get('LANG') or ''
-        return 'ru' if loc.lower().startswith('ru') else 'en'
-    try:
-        langid = ctypes.windll.kernel32.GetUserDefaultUILanguage()
-    except (AttributeError, OSError):
-        return 'en'
-    return 'ru' if langid & 0x3ff == LANG_RU else 'en'
-
-
-def default_game_language(ui):
-    return 'ru' if ui == 'ru' else 'en-US'
 
 
 def gib(n):

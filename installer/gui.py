@@ -2,10 +2,10 @@
 
 A front end over the CLI (docs/installer.md): it collects the game files, the keys file path, the game language and the
 install folder, runs `python -m installer ...` as a subprocess and shows its JSON events. Decisions live in guilogic.py;
-this file only draws. The window text is in installer/text/<en|ru>.json under "ui.*" and "launcher.*" ids.
+this file only draws. The window is in English only; its text is in installer/text/en.json under "ui.*" and
+"launcher.*" ids.
 
-    --selftest [--shots DIR]   build every screen in both languages and close by itself (PNG per screen with --shots)
-    --lang en|ru               window language (default: the Windows display language)
+    --selftest [--shots DIR]   build every screen and close by itself (PNG per screen with --shots)
 """
 import argparse
 import json
@@ -26,75 +26,118 @@ except ImportError:
 from . import ini
 from . import layout as layouts
 from . import update
-from .guilogic import (DKB_STEP_ORDER, NUP_GAMES, DONE, FAILED, PENDING, RUNNING, SKIPPED, UI_LANGUAGES, Catalog, Form, Model, Process,
-                       amount, default_game_language, describe_event, parse_line, windows_ui_language)
+from .guilogic import (DEFAULT_GAME_LANGUAGE, DKB_STEP_ORDER, NUP_GAMES, DONE, FAILED, PENDING, RUNNING, SKIPPED, Catalog,
+                       Form, Model, Process, amount, describe_event, parse_line)
 
 POLL_MS = 100
 GLYPH = {PENDING: '\u25cb', RUNNING: '\u25b6', DONE: '\u2714', SKIPPED: '\u2013', FAILED: '\u2716'}
-# The in-game menu's Donkey Kong look (runtime/ui/menu.cpp style_dk), drawn here with our own colours only. The red and
-# green of the menu are accents and fills; the text variants (RED_TEXT, GREEN_TEXT) are their lighter tints, because the
-# originals reach only 3.0:1 and 4.2:1 on the window bark. Every text/background pair below is >= 4.5:1 (docs/installer.md).
-BARK, FRAME, BORDER, FIELD, HOVER = '#2a1a0e', '#3b2614', '#6b4a2a', '#1d1109', '#4d331b'
-BANANA, CREAM, MUTED = '#f6c52b', '#f3e9d2', '#b8a888'
-RED, RED_TEXT, GREEN, GREEN_TEXT = '#c8281e', '#ff8a7a', '#3f8f3a', '#6fcf68'
-BRAND = 'DONKEY KONG BANANZA  ·  PC RECOMP'
-COLOR = {PENDING: MUTED, RUNNING: BANANA, DONE: GREEN_TEXT, SKIPPED: MUTED, FAILED: RED_TEXT}
+# One look per game, drawn with our own colours only. Keys: bg (window), frame (header strip, buttons), border, field
+# (entries, log), hover, accent (titles, focus, progress, the main button), accent_hi (main button hovered), text, muted,
+# disabled (text of disabled buttons), stripe (the 4 px line under the header), err, ok and warn (status text).
+# Every text/background pair is >= 4.5:1 (tests/installer_gui_test.py ThemeTest checks it).
+THEMES = {
+    # The in-game menu's Donkey Kong look (runtime/ui/menu.cpp style_dk). The menu's red and green are accents and
+    # fills; err and ok are their lighter tints, because the originals reach only 3.0:1 and 4.2:1 on the bark.
+    'dk': dict(brand='DONKEY KONG BANANZA  ·  PC RECOMP', art='bananas',
+               bg='#2a1a0e', frame='#3b2614', border='#6b4a2a', field='#1d1109', hover='#4d331b',
+               accent='#f6c52b', accent_hi='#ffd95a', text='#f3e9d2', muted='#b8a888', disabled='#9c8a70',
+               stripe='#c8281e', err='#ff8a7a', ok='#6fcf68', warn='#f6c52b'),
+    # The in-game menu's Splatoon Raiders look (runtime/ui/menu.cpp style_raiders): deep night blue, cyan ink, coral.
+    'raiders': dict(brand='SPLATOON RAIDERS  ·  PC RECOMP', art='splat',
+                    bg='#0a161f', frame='#10262f', border='#245964', field='#06111a', hover='#1a4f55',
+                    accent='#31e1cf', accent_hi='#7cf0e4', text='#ebf9f7', muted='#9ebebe', disabled='#6f9499',
+                    stripe='#ff7057', err='#ff8a73', ok='#8be06a', warn='#ffd34d'),
+}
 PAD = 14
 
 
-def apply_theme(root, ui_font):
-    """A 'dk' ttk theme on top of clam (portable: clam ships with every Tk). Falls back to the platform theme if missing."""
+def theme_for(game):
+    return THEMES['raiders' if game == 'raiders' else 'dk']
+
+
+def status_colors(t):
+    return {PENDING: t['muted'], RUNNING: t['accent'], DONE: t['ok'], SKIPPED: t['muted'], FAILED: t['err']}
+
+
+def apply_theme(root, ui_font, t):
+    """A ttk theme on top of clam (portable: clam ships with every Tk), coloured by t (THEMES). Falls back to the
+    platform theme if clam is missing."""
     style = ttk.Style(root)
     try:
-        style.theme_create('dk', parent='clam')
-        style.theme_use('dk')
+        style.theme_create('setup', parent='clam')
+        style.theme_use('setup')
     except tk.TclError:
         pass
-    root.configure(background=BARK)
-    root.option_add('*TCombobox*Listbox.background', FIELD)
-    root.option_add('*TCombobox*Listbox.foreground', CREAM)
-    root.option_add('*TCombobox*Listbox.selectBackground', BANANA)
-    root.option_add('*TCombobox*Listbox.selectForeground', BARK)
+    bg, frame, border, field, hover = t['bg'], t['frame'], t['border'], t['field'], t['hover']
+    accent, text, disabled = t['accent'], t['text'], t['disabled']
+    root.configure(background=bg)
+    root.option_add('*TCombobox*Listbox.background', field)
+    root.option_add('*TCombobox*Listbox.foreground', text)
+    root.option_add('*TCombobox*Listbox.selectBackground', accent)
+    root.option_add('*TCombobox*Listbox.selectForeground', bg)
     font = (ui_font, 10)
-    style.configure('.', background=BARK, foreground=CREAM, font=font, bordercolor=BORDER, lightcolor=BORDER,
-                    darkcolor=BORDER, troughcolor=FIELD, focuscolor=BANANA, insertcolor=CREAM)
-    style.configure('TButton', background=FRAME, foreground=CREAM, relief='flat', borderwidth=2, padding=(14, 5),
-                    bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER)
-    style.map('TButton', background=[('disabled', BARK), ('pressed', BANANA), ('active', HOVER)],
-              foreground=[('disabled', '#9c8a70'), ('pressed', BARK)], bordercolor=[('focus', BANANA)])
-    style.configure('Accent.TButton', background=BANANA, foreground=BARK, font=(ui_font, 10, 'bold'),
-                    bordercolor=BANANA, lightcolor=BANANA, darkcolor=BANANA)
-    style.map('Accent.TButton', background=[('disabled', BARK), ('pressed', CREAM), ('active', '#ffd95a')],
-              foreground=[('disabled', '#9c8a70')])
-    style.configure('Toolbutton', background=FRAME, foreground=CREAM, relief='flat', borderwidth=2, padding=(8, 2),
-                    bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER)
-    style.map('Toolbutton', background=[('selected', BANANA), ('active', HOVER)], foreground=[('selected', BARK)])
+    style.configure('.', background=bg, foreground=text, font=font, bordercolor=border, lightcolor=border,
+                    darkcolor=border, troughcolor=field, focuscolor=accent, insertcolor=text)
+    style.configure('TButton', background=frame, foreground=text, relief='flat', borderwidth=2, padding=(14, 5),
+                    bordercolor=border, lightcolor=border, darkcolor=border)
+    style.map('TButton', background=[('disabled', bg), ('pressed', accent), ('active', hover)],
+              foreground=[('disabled', disabled), ('pressed', bg)], bordercolor=[('focus', accent)])
+    style.configure('Accent.TButton', background=accent, foreground=bg, font=(ui_font, 10, 'bold'),
+                    bordercolor=accent, lightcolor=accent, darkcolor=accent)
+    style.map('Accent.TButton', background=[('disabled', bg), ('pressed', text), ('active', t['accent_hi'])],
+              foreground=[('disabled', disabled)])
     for name in ('TEntry', 'TCombobox'):
-        style.configure(name, fieldbackground=FIELD, foreground=CREAM, insertcolor=CREAM, bordercolor=BORDER,
-                        lightcolor=BORDER, darkcolor=BORDER, arrowcolor=BANANA, padding=3)
-    style.map('TEntry', bordercolor=[('focus', BANANA)], lightcolor=[('focus', BANANA)], darkcolor=[('focus', BANANA)])
-    style.map('TCombobox', fieldbackground=[('readonly', FIELD)], foreground=[('readonly', CREAM)],
-              selectbackground=[('readonly', FIELD)], selectforeground=[('readonly', CREAM)],
-              bordercolor=[('focus', BANANA)], background=[('active', HOVER)])
-    style.configure('Horizontal.TProgressbar', background=BANANA, troughcolor=FIELD, bordercolor=BORDER,
-                    lightcolor=BANANA, darkcolor=BANANA, thickness=14)
-    style.configure('TScrollbar', background=FRAME, troughcolor=FIELD, arrowcolor=BANANA, bordercolor=BORDER)
-    style.configure('Header.TFrame', background=FRAME)
-    style.configure('Brand.TLabel', background=FRAME, foreground=BANANA, font=(ui_font, 14, 'bold'))
-    style.configure('Title.TLabel', foreground=BANANA, font=(ui_font, 15, 'bold'))
-    style.configure('Sub.TLabel', background=FRAME, foreground=CREAM, font=(ui_font, 10))
-    style.configure('Notice.TLabel', background=FRAME, foreground=CREAM, padding=8, borderwidth=2, relief='solid',
-                    bordercolor=BANANA)
-    style.configure('Err.TLabel', foreground=RED_TEXT)
-    style.configure('Warn.TLabel', foreground=BANANA)
-    style.configure('Version.TLabel', background=FRAME, foreground=MUTED)
+        style.configure(name, fieldbackground=field, foreground=text, insertcolor=text, bordercolor=border,
+                        lightcolor=border, darkcolor=border, arrowcolor=accent, padding=3)
+    style.map('TEntry', bordercolor=[('focus', accent)], lightcolor=[('focus', accent)], darkcolor=[('focus', accent)])
+    style.map('TCombobox', fieldbackground=[('readonly', field)], foreground=[('readonly', text)],
+              selectbackground=[('readonly', field)], selectforeground=[('readonly', text)],
+              bordercolor=[('focus', accent)], background=[('active', hover)])
+    style.configure('Horizontal.TProgressbar', background=accent, troughcolor=field, bordercolor=border,
+                    lightcolor=accent, darkcolor=accent, thickness=14)
+    style.configure('TScrollbar', background=frame, troughcolor=field, arrowcolor=accent, bordercolor=border)
+    style.configure('Header.TFrame', background=frame)
+    style.configure('Brand.TLabel', background=frame, foreground=accent, font=(ui_font, 14, 'bold'))
+    style.configure('Title.TLabel', foreground=accent, font=(ui_font, 15, 'bold'))
+    style.configure('Sub.TLabel', background=frame, foreground=text, font=(ui_font, 10))
+    style.configure('Notice.TLabel', background=frame, foreground=text, padding=8, borderwidth=2, relief='solid',
+                    bordercolor=accent)
+    style.configure('Err.TLabel', foreground=t['err'])
+    style.configure('Warn.TLabel', foreground=t['warn'])
+    style.configure('Version.TLabel', background=frame, foreground=t['muted'])
     return style
+
+
+def splat_outline(cx, cy, r, steps=48):
+    """An ink splat's outline: a circle whose radius ripples with a few sines, so it bulges into rounded lobes."""
+    import math
+    pts = []
+    for i in range(steps):
+        a = 2 * math.pi * i / steps
+        k = 1 + 0.16 * math.sin(5 * a + 0.4) + 0.07 * math.sin(9 * a + 1.3) + 0.04 * math.sin(13 * a)
+        pts.append((cx + r * k * math.cos(a), cy + r * k * math.sin(a)))
+    return pts
+
+
+# The splat's droplets around the blob, as (dx, dy, radius) in units of the blob radius, and which colour each takes.
+SPLAT_DROPS = ((1.32, -0.78, 0.22, 'accent'), (-1.28, 0.70, 0.17, 'accent'), (1.05, 1.02, 0.14, 'stripe'),
+               (-0.95, -1.10, 0.11, 'stripe'))
+
+
+def draw_splat(canvas, cx, cy, r, t):
+    """A cyan ink splat with two cyan and two coral droplets, centred at (cx, cy) with blob radius r."""
+    canvas.create_polygon([c for p in splat_outline(cx, cy, r) for c in p], fill=t['accent'], outline='', smooth=True)
+    for dx, dy, dr, key in SPLAT_DROPS:
+        x, y, rr = cx + dx * r, cy + dy * r, dr * r
+        canvas.create_oval(x - rr, y - rr, x + rr, y + rr, fill=t[key], outline='')
+    # A highlight: a small light oval on the upper left of the blob, as on wet ink.
+    canvas.create_oval(cx - 0.55 * r, cy - 0.55 * r, cx - 0.15 * r, cy - 0.25 * r, fill=t['accent_hi'], outline='')
 
 
 def draw_bananas(canvas, x, y, s):
     """A small banana bunch: three crescents (polygons between two arcs) fanning from a brown stem at (x, y)."""
     import math
-    shades = (('#dea51e', -0.5), (BANANA, 0.5), ('#ffd650', 0.0))   # the middle one is drawn last, on top
+    shades = (('#dea51e', -0.5), ('#f6c52b', 0.5), ('#ffd650', 0.0))   # the middle one is drawn last, on top
     for fill, rot in shades:
         cr, sr = math.cos(rot), math.sin(rot)
         outer, inner = [], []
@@ -134,24 +177,25 @@ def fix_dpi_awareness():
 
 
 class App:
-    def __init__(self, root, ui_lang, layout, run_args=None, game='totk', check_updates=False):
+    def __init__(self, root, layout, run_args=None, game='totk', check_updates=False):
         self.root, self.layout = root, layout
         self.game = game
-        self.cat = Catalog(ui_lang, game)
+        self.cat = Catalog(game)
         self.model = Model(DKB_STEP_ORDER if game in NUP_GAMES else None)
         self.process = None
         self.closing = False
         self.run_args = run_args or {}   # extra CLI options for tests: temp, verify
         self.log_entries = []            # events and raw lines of the run, rendered by render_log
-        self.bound = []                  # (widget, option, id, params) retranslated on a language switch
         self.vars = {n: tk.StringVar() for n in ('base', 'update', 'keys', 'nup', 'exefs', 'romfs', 'package', 'dest')}
         self.vars['lang'] = tk.StringVar()
-        self.lang_code = default_game_language(ui_lang)
+        self.lang_code = DEFAULT_GAME_LANGUAGE
         self.screen = None
         self.fitted = None               # the (width, height) fit last gave the window
 
+        self.t = theme_for(game)
+        self.status_color = status_colors(self.t)
         root.title(self.cat('ui.title'))
-        icon = layout.runtime / 'dkb.ico'
+        icon = layout.runtime / ('spr.ico' if game == 'raiders' else 'dkb.ico')
         png = layout.runtime / 'totk.png'   # Tk loads no .ico off Windows; the Linux release converts it
         if os.name == 'nt' and icon.is_file():
             root.iconbitmap(default=str(icon))
@@ -161,28 +205,25 @@ class App:
         root.protocol('WM_DELETE_WINDOW', self.on_close)
         self.ui_font = 'Segoe UI' if os.name == 'nt' else 'DejaVu Sans'
         self.mono_font = 'Consolas' if os.name == 'nt' else 'DejaVu Sans Mono'
-        apply_theme(root, self.ui_font)
+        apply_theme(root, self.ui_font, self.t)
 
         top = ttk.Frame(root, style='Header.TFrame', padding=(PAD, 10, PAD, 10))
         top.pack(fill='x')
-        art = tk.Canvas(top, width=46, height=42, bg=FRAME, highlightthickness=0)
-        draw_bananas(art, 12, 16, 17)
+        art = tk.Canvas(top, width=46, height=42, bg=self.t['frame'], highlightthickness=0)
+        if self.t['art'] == 'splat':
+            draw_splat(art, 22, 21, 11, self.t)
+        else:
+            draw_bananas(art, 12, 16, 17)
         art.pack(side='left', padx=(0, 10))
         names = ttk.Frame(top, style='Header.TFrame')
         names.pack(side='left')
-        ttk.Label(names, text=BRAND, style='Brand.TLabel').pack(anchor='w')
+        ttk.Label(names, text=self.t['brand'], style='Brand.TLabel').pack(anchor='w')
         self.title = self.label(names, 'ui.title', style='Sub.TLabel')
         self.title.pack(anchor='w')
         version = ttk.Label(top, style='Version.TLabel')
         self.bind_text(version, 'text', 'ui.version', version=layout.release)
         version.pack(side='left', padx=(10, 0), pady=(6, 0))
-        sw = ttk.Frame(top, style='Header.TFrame')
-        sw.pack(side='right')
-        self.ui_var = tk.StringVar(value=self.cat.lang)
-        for code in UI_LANGUAGES:
-            ttk.Radiobutton(sw, text=code.upper(), value=code, variable=self.ui_var, style='Toolbutton',
-                            command=self.switch_language).pack(side='left', padx=1)
-        tk.Frame(root, height=4, bg=RED).pack(fill='x')   # the DK tie's red under the strip
+        tk.Frame(root, height=4, bg=self.t['stripe']).pack(fill='x')   # DK's tie red, or Raiders' coral ink
         self.body = ttk.Frame(root, padding=PAD)
         self.body.pack(fill='both', expand=True)
         self.frames = {'form': self.build_form(), 'run': self.build_run(), 'finish': self.build_finish()}
@@ -211,7 +252,6 @@ class App:
     # ---- text -----------------------------------------------------------------------------------------------------
 
     def bind_text(self, widget, option, id, **params):
-        self.bound.append((widget, option, id, params))
         widget.configure(**{option: self.cat(id, **params)})
 
     def label(self, parent, id, **kw):
@@ -223,23 +263,6 @@ class App:
         w = ttk.Button(parent, command=command, **kw)
         self.bind_text(w, 'text', id)
         return w
-
-    def retext(self):
-        self.root.title(self.cat('ui.title'))
-        for widget, option, id, params in self.bound:
-            widget.configure(**{option: self.cat(id, **params)})
-        self.fill_languages()
-        self.refresh_form()
-        self.refresh_run()
-        self.refresh_finish()
-        self.render_log()
-
-    def switch_language(self):
-        self.cat.set_language(self.ui_var.get())
-        code = self.selected_lang()
-        self.retext()
-        self.vars['lang'].set(self.lang_label(code))
-        self.fit()
 
     def lang_label(self, code):
         return self.cat('lang.' + code)
@@ -253,9 +276,8 @@ class App:
         """The game language code behind the combobox text (kept when it is not one of the labels)."""
         shown = self.vars['lang'].get()
         for code in ini.LANGUAGES:
-            for lang in UI_LANGUAGES:
-                if shown == Catalog(lang)('lang.' + code):
-                    return code
+            if shown == self.cat('lang.' + code):
+                return code
         return self.lang_code
 
     # ---- screens --------------------------------------------------------------------------------------------------
@@ -353,8 +375,8 @@ class App:
         self.warn_label = ttk.Label(f, wraplength=620, justify='left', style='Warn.TLabel')
         self.warn_label.pack(anchor='w')
         self.log_frame = ttk.Frame(f)
-        self.log = tk.Text(self.log_frame, height=10, wrap='word', state='disabled', font=(self.mono_font, 9), bg=FIELD, fg=CREAM, insertbackground=CREAM,
-                            relief='flat', highlightthickness=2, highlightbackground=BORDER, highlightcolor=BORDER)
+        self.log = tk.Text(self.log_frame, height=10, wrap='word', state='disabled', font=(self.mono_font, 9), bg=self.t['field'], fg=self.t['text'], insertbackground=self.t['text'],
+                            relief='flat', highlightthickness=2, highlightbackground=self.t['border'], highlightcolor=self.t['border'])
         scroll = ttk.Scrollbar(self.log_frame, command=self.log.yview)
         self.log.configure(yscrollcommand=scroll.set)
         scroll.pack(side='right', fill='y')
@@ -448,7 +470,6 @@ class App:
         self.clear_log()
         self.build_step_rows(self.model.steps)
         self.cancel_button.configure(state='normal')
-        self.bound = [b for b in self.bound if b[0] is not self.cancel_button]
         self.bind_text(self.cancel_button, 'text', 'ui.cancel')
         self.show('run')
         self.refresh_run()
@@ -510,7 +531,7 @@ class App:
         m = self.model
         for s, (glyph, name) in self.step_rows.items():
             state = m.states.get(s, PENDING)
-            glyph.configure(text=GLYPH[state], foreground=COLOR[state])
+            glyph.configure(text=GLYPH[state], foreground=self.status_color[state])
             name.configure(text=self.cat('step.' + s) + (f'  ({self.cat("ui.state_" + state)})'
                                                           if state in (SKIPPED, FAILED) else ''),
                            font=(self.ui_font, 10, 'bold') if state == RUNNING else (self.ui_font, 10))
@@ -546,7 +567,6 @@ class App:
             self.log_frame.pack(fill='both', expand=True, pady=(8, 0))
         else:
             self.log_frame.pack_forget()
-        self.bound = [b for b in self.bound if b[0] is not self.log_toggle]
         self.bind_text(self.log_toggle, 'text', 'ui.hide_log' if self.log_open else 'ui.show_log')
         self.fit()
 
@@ -575,7 +595,6 @@ class App:
     def cancel(self):
         if self.process:
             self.cancel_button.configure(state='disabled')
-            self.bound = [b for b in self.bound if b[0] is not self.cancel_button]
             self.bind_text(self.cancel_button, 'text', 'ui.cancelling')
             self.process.cancel()
 
@@ -609,7 +628,7 @@ class App:
         for s in m.steps:
             state = m.states.get(s, PENDING)
             ttk.Label(self.finish_steps, text=f'{GLYPH[state]}  {self.cat("step." + s)}',
-                      foreground=COLOR[state]).pack(anchor='w')
+                      foreground=self.status_color[state]).pack(anchor='w')
         if result == 'ok':
             self.open_button.state(['!disabled'])
         else:
@@ -667,13 +686,13 @@ def grab(root, path):
 
 
 def selftest(layout, shots=None, game='totk'):
-    """Every screen in both languages; the window closes itself. Returns 0 when nothing raised."""
+    """Every screen; the window closes itself. Returns 0 when nothing raised."""
     fix_tcl_paths()
     fix_dpi_awareness()
     root = tk.Tk()
     root.geometry('+60+40')
-    app = App(root, 'en', layout, game=game)
-    steps, mixed = [], []
+    app = App(root, layout, game=game)
+    steps = []
     destination = {'bananza': 'Z:/selftest/Bananza', 'raiders': 'Z:/selftest/SPR'}.get(game, 'Z:/selftest/TotK')
 
     def shot(name):
@@ -683,67 +702,56 @@ def selftest(layout, shots=None, game='totk'):
             grab(root, Path(shots) / f'{name}.png')
 
     def run_all():
-        for lang in UI_LANGUAGES:
-            app.ui_var.set(lang)
-            app.switch_language()
-            tag = lang
-            app.vars['dest'].set(destination)
-            app.vars['base'].set('Z:/selftest/totk.xci')
-            app.vars['update'].set('Z:/selftest/totk-1.2.1.nsp')
-            app.vars['keys'].set('Z:/selftest/prod.keys')
-            if game in NUP_GAMES:
-                app.vars['exefs'].set('Z:/selftest/Bananza/exefs')
-                app.vars['romfs'].set('Z:/selftest/Bananza/romfs')
-            app.show('form')
-            app.start()   # missing files: shows the problems
-            steps.append(app.form_error.cget('text'))
-            shot(f'form-{tag}')
-            app.model = Model()
-            app.clear_log()
-            app.build_step_rows(app.model.steps)
-            app.show('run')
-            for e in samples(SAMPLE_RUN, game):
-                app.feed(json.dumps(e))
-            app.log_open = False
-            app.toggle_log()
-            app.refresh_run()
-            shot(f'run-{tag}')
-            if lang == 'en':   # the log follows the window language: no English line may remain after the switch
-                app.ui_var.set('ru')
-                app.switch_language()
-                text = app.log.get('1.0', 'end')
-                mixed.append('Checking' in text or (game == 'totk' and 'Extracting' not in text and 'Распаковка' not in text))
-                app.ui_var.set('en')
-                app.switch_language()
-            app.model = Model()
-            for e in samples(SAMPLE_OK, game):
-                app.model.apply(e)
-            app.model.dest = destination
-            app.model.finish(0)
-            app.refresh_finish()
-            app.show('finish')
-            shot(f'finish-ok-{tag}')
-            app.model = Model()
-            for e in samples(SAMPLE_RUN[:3], game) + [{'type': 'error', 'id': 'check.disk_space', 'step': 'check',
-                                        'params': {'path': destination, 'need_gb': 36.4, 'free_gb': 20.1}},
-                                       {'type': 'end', 'result': 'failed', 'seconds': 3}]:
-                app.model.apply(e)
-            app.model.finish(1)
-            app.refresh_finish()
-            shot(f'finish-failed-{tag}')
-            app.model = Model()
-            for e in samples(SAMPLE_RUN[:3], game):
-                app.model.apply(e)
-            app.model.finish(3)
-            app.refresh_finish()
-            shot(f'finish-cancelled-{tag}')
-            app.toggle_log()
+        app.vars['dest'].set(destination)
+        app.vars['base'].set('Z:/selftest/totk.xci')
+        app.vars['update'].set('Z:/selftest/totk-1.2.1.nsp')
+        app.vars['keys'].set('Z:/selftest/prod.keys')
+        if game in NUP_GAMES:
+            app.vars['exefs'].set(destination + '/exefs')
+            app.vars['romfs'].set(destination + '/romfs')
+        app.show('form')
+        app.start()   # missing files: shows the problems
+        steps.append(app.form_error.cget('text'))
+        shot('form')
+        app.model = Model()
+        app.clear_log()
+        app.build_step_rows(app.model.steps)
+        app.show('run')
+        for e in samples(SAMPLE_RUN, game):
+            app.feed(json.dumps(e))
+        app.log_open = False
+        app.toggle_log()
+        app.refresh_run()
+        shot('run')
+        app.model = Model()
+        for e in samples(SAMPLE_OK, game):
+            app.model.apply(e)
+        app.model.dest = destination
+        app.model.finish(0)
+        app.refresh_finish()
+        app.show('finish')
+        shot('finish-ok')
+        app.model = Model()
+        for e in samples(SAMPLE_RUN[:3], game) + [{'type': 'error', 'id': 'check.disk_space', 'step': 'check',
+                                    'params': {'path': destination, 'need_gb': 36.4, 'free_gb': 20.1}},
+                                   {'type': 'end', 'result': 'failed', 'seconds': 3}]:
+            app.model.apply(e)
+        app.model.finish(1)
+        app.refresh_finish()
+        shot('finish-failed')
+        app.model = Model()
+        for e in samples(SAMPLE_RUN[:3], game):
+            app.model.apply(e)
+        app.model.finish(3)
+        app.refresh_finish()
+        shot('finish-cancelled')
+        app.toggle_log()
         root.destroy()
 
     root.after(200, run_all)
     root.after(60000, root.destroy)   # never leaves a window open
     root.mainloop()
-    return 0 if len(steps) == len(UI_LANGUAGES) and all(steps) and mixed == [False] else 1
+    return 0 if len(steps) == 1 and all(steps) else 1
 
 
 def samples(events, game):
@@ -755,12 +763,12 @@ def samples(events, game):
     for original in events:
         e = dict(original)
         if 'dest' in e:
-            e['dest'] = 'Z:/selftest/Bananza'
+            e['dest'] = 'Z:/selftest/SPR' if game == 'raiders' else 'Z:/selftest/Bananza'
         if e.get('step') in mapping:
             e['step'] = mapping[e['step']]
         if e['type'] == 'start':
             e['steps'] = list(DKB_STEP_ORDER)
-            e['dest'] = 'Z:/selftest/Bananza'
+            e['dest'] = 'Z:/selftest/SPR' if game == 'raiders' else 'Z:/selftest/Bananza'
         if e['type'] == 'plan':
             e['run'] = [mapping.get(s, s) for s in e.get('run', [])]
             e['skip'] = {mapping.get(s, s): reason for s, reason in e.get('skip', {}).items()}
@@ -782,7 +790,6 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--selftest', action='store_true')
     ap.add_argument('--shots', type=Path)
-    ap.add_argument('--lang', choices=UI_LANGUAGES)
     ap.add_argument('--root', type=Path)
     ap.add_argument('--game', choices=('raiders', 'bananza', 'totk'), default='raiders')
     for name in ('package', 'toolchain', 'deps', 'ninja', 'dll-dir', 'translator', 'dotnet'):
@@ -797,7 +804,7 @@ def main(argv=None):
     fix_dpi_awareness()
     root = tk.Tk()
     tools = {name: getattr(args, name) for name in ('toolchain', 'deps', 'ninja', 'dll_dir', 'translator', 'dotnet', 'jobs')}
-    app = App(root, args.lang or windows_ui_language(), layout, run_args={'tools': tools}, game=args.game,
+    app = App(root, layout, run_args={'tools': tools}, game=args.game,
               check_updates=not update.disabled(args.no_update_check))
     if args.package:
         app.vars['package'].set(str(args.package))

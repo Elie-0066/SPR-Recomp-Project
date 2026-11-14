@@ -84,6 +84,9 @@ EXE = 'dkb.exe' if WIN else 'dkb'   # DKB Recomp: not TotK's executable
 # A version name that is a game of its own in this checkout gets its own executable (--exe overrides either). Splatoon
 # Raiders was lifted into generated/raiders and shares nothing with the DKB builds but the runtime.
 GAME_EXE = {'raiders': 'spr-recomp'}   # a name of the project's own: the game's trademark stays out of it
+# Targets whose executable takes the project's own icon (runtime/totk.rc), never a game.ico taken from the game.
+OWN_ICON = {'raiders': ('SPR_ICON', 'spr.ico')}
+ICON = None   # (define, file in runtime/) of OWN_ICON for this build, set by main()
 
 
 def on_path(name):
@@ -384,6 +387,15 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=
     # A compiler cache (sccache) may front clang: every lift rewrites the generated chunks with the same contents, so
     # the cached objects save the compile step on the next build.
     cache = f'{cmd_arg(os.environ["SCCACHE"])} ' if os.environ.get('SCCACHE') else ''
+    # The executable's icon. Raiders always takes the project's own spr.ico (OWN_ICON). Otherwise a game.ico in the
+    # build folder (the game's own logo, game content kept out of the repository) replaces dkb.ico: windres looks the
+    # icon up in the include directories, the build folder first.
+    if ICON:
+        icon_define, icon_file = ICON[0], RUNTIME / ICON[1]
+    elif (out / 'game.ico').is_file():
+        icon_define, icon_file = 'GAME_ICON', out / 'game.ico'
+    else:
+        icon_define, icon_file = '', RUNTIME / 'dkb.ico'
     lines = [
         '# Written by tools/build_game.py; do not edit.',
         'ninja_required_version = 1.10',
@@ -410,10 +422,8 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=
         '  description = CC $in',
         '',
         'rule rc',
-        # A game.ico in the build folder (the game's own logo, game content kept out of the repository) replaces
-        # dkb.ico: windres looks the icon up in the include directories, the build folder first.
         f'  command = {cmd_arg(WINDRES.as_posix())} -I {cmd_path(out)} -I {cmd_path(RUNTIME)}'
-        f'{" -D GAME_ICON" if (out / "game.ico").is_file() else ""} -O coff $in -o $out',
+        f'{" -D " + icon_define if icon_define else ""} -O coff $in -o $out',
         '  description = RC $in',
         '',
         'rule link',
@@ -444,7 +454,7 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=
         o = runtime_object(out, src)
         if src.suffix == '.rc':   # windres writes no depfile: the files totk.rc embeds are listed by hand
             lines.append(f'build {ninja_path(o)}: rc {ninja_path(src)} | {ninja_path(RUNTIME / "totk.manifest")} '
-                         f'{ninja_path(out / "game.ico" if (out / "game.ico").is_file() else RUNTIME / "dkb.ico")}')
+                         f'{ninja_path(icon_file)}')
         else:
             lines.append(f'build {ninja_path(o)}: cc_rt {ninja_path(src)}')
             if src.suffix == '.cpp':   # the Ampere lowering headers (runtime/third_party/eglantine) need C++20
@@ -839,7 +849,7 @@ def main():
              'romfs': (args.romfs or extracted / 'romfs').resolve(),
              'profile': (args.profile or ROOT / 'build' / ('profile' if args.version == 'v121'
                                                            else f'profile-{args.version}')).resolve()}
-    global CLANG, AR, WINDRES, NINJA, TOOLCHAIN_BIN, DEPS, EXE
+    global CLANG, AR, WINDRES, NINJA, TOOLCHAIN_BIN, DEPS, EXE, ICON
     expected = args.expected
     if not expected:
         name = f'expected-v{DISPLAY_VERSIONS[args.version]}.json' if args.version in DISPLAY_VERSIONS \
@@ -865,6 +875,7 @@ def main():
         EXE = args.exe + ('' if args.exe.endswith('.exe') or not WIN else '.exe')
     else:
         EXE = GAME_EXE.get(args.version, 'dkb') + ('.exe' if WIN else '')
+    ICON = OWN_ICON.get(args.version)
     if args.ninja:
         NINJA = args.ninja.resolve()
     elif not NINJA.is_file() and (ROOT / 'bin' / ('ninja' + ('.exe' if WIN else ''))).is_file():

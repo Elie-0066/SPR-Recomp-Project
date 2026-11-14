@@ -32,7 +32,7 @@ from installer.events import Reporter  # noqa: E402
 from installer.runner import Context  # noqa: E402
 from installer.steps import all_steps  # noqa: E402
 from installer.guilogic import (DONE, FAILED, PENDING, RUNNING, SKIPPED, Catalog, Form, Model, Process,  # noqa: E402
-                                amount, describe_event, parse_line, windows_ui_language)
+                                amount, describe_event, parse_line)
 
 INSTALLED = ROOT / 'build' / 'install-test'
 FIXTURE = ROOT / 'build' / 'inst-gui' / 'e2e-install'
@@ -100,13 +100,13 @@ class ModelTest(unittest.TestCase):
     def test_space_text(self):
         m = fold({'type': 'space', 'dest': 'D:\\T', 'need': 36_400_000_000, 'free': 100_000_000_000, 'temp': 'C:\\t',
                   'temp_need': 0, 'temp_free': 5, 'same_disk': True})
-        text = m.need_text(Catalog('en'))
+        text = m.need_text(Catalog())
         self.assertIn('36.4', text)
         self.assertIn('100.0', text)
-        self.assertEqual(Model().need_text(Catalog('en')), '')
+        self.assertEqual(Model().need_text(Catalog()), '')
         m = fold({'type': 'space', 'dest': 'D:\\T', 'need': 20_000_000_000, 'free': 1, 'temp': 'C:\\t',
                   'temp_need': 2_000_000_000, 'temp_free': 3, 'same_disk': False})
-        self.assertIn('C:\\t', m.need_text(Catalog('en')))
+        self.assertIn('C:\\t', m.need_text(Catalog()))
 
     def test_warnings_collect(self):
         m = fold(START, {'type': 'warning', 'id': 'warn.lang_needs_fonts', 'params': {'lang': 'ko'}})
@@ -209,7 +209,7 @@ class FormTest(unittest.TestCase):
 
     def test_installed_folder_needs_only_itself(self):
         out = self.dir / 'out'
-        statefile.save(self._mkdir(out), statefile.empty('r0') | {'lang': 'ru'})
+        statefile.save(self._mkdir(out), statefile.empty('r0') | {'lang': 'ja'})
         form = Form(dest=str(out))
         self.assertTrue(form.update_mode())
         self.assertEqual(form.problems(), [])
@@ -233,54 +233,42 @@ class FormTest(unittest.TestCase):
 
 
 class CatalogTest(unittest.TestCase):
-    def test_russian_covers_english_with_the_same_placeholders(self):
-        en, ru = Catalog('en').english, Catalog('ru').texts
-        self.assertEqual(sorted(set(en) - set(ru)), [])
-        self.assertEqual(sorted(set(ru) - set(en)), [])
-        holes = [k for k in en if sorted(re.findall(r'\{\w+\}', en[k])) != sorted(re.findall(r'\{\w+\}', ru[k]))]
-        self.assertEqual(holes, [])
+    def test_only_english(self):
+        self.assertEqual(sorted(p.name for p in (ROOT / 'installer' / 'text').glob('*.json')), ['en.json'])
 
     def test_every_id_the_window_uses_exists(self):
-        cat = Catalog('en')
+        cat = Catalog()
         ids = ['ui.' + n for n in ('title', 'start', 'cancel', 'open_folder', 'notice', 'space_one', 'space_two',
                                    'process_died', 'result_ok', 'result_failed', 'result_cancelled')]
         ids += [f'step.{s}' for s in ('check', 'extract', 'lift', 'compile', 'prepare', 'cleanup')]
         ids += ['ui.state_' + n for n in ('started', 'done', 'skipped', 'pending', 'running', 'failed')]
-        for lang in ('en', 'ru'):
-            cat.set_language(lang)
-            self.assertEqual([i for i in ids if not cat.has(i)], [])
+        self.assertEqual([i for i in ids if not cat.has(i)], [])
 
     def test_codes_become_names(self):
-        for lang, korean in (('en', 'Korean'), ('ru', 'Корейский')):
-            cat = Catalog(lang)
-            self.assertIn(korean, cat('warn.lang_needs_fonts', lang='ko'))
-            self.assertNotIn(' ko ', cat('warn.lang_needs_fonts', lang='ko'))
-            self.assertNotIn('extract', cat('state.output_changed', step='extract'))
-            for word in ('base', 'update', 'keys'):
-                self.assertIn(cat('param.input.' + word), cat('check.keys_wrong', input=word))
-            self.assertNotIn('en-US', cat('check.lang_unknown', lang='xx', known='ja, en-US'))
-        self.assertEqual(Catalog('en')('check.lang_unknown', lang='xx', known='ja, en-US'),
+        cat = Catalog()
+        self.assertIn('Korean', cat('warn.lang_needs_fonts', lang='ko'))
+        self.assertNotIn(' ko ', cat('warn.lang_needs_fonts', lang='ko'))
+        self.assertNotIn('extract', cat('state.output_changed', step='extract'))
+        for word in ('base', 'update', 'keys'):
+            self.assertIn(cat('param.input.' + word), cat('check.keys_wrong', input=word))
+        self.assertNotIn('en-US', cat('check.lang_unknown', lang='xx', known='ja, en-US'))
+        self.assertEqual(Catalog()('check.lang_unknown', lang='xx', known='ja, en-US'),
                          "Unknown language 'xx'. Known: Japanese, English (US).")
 
     def test_fallback_and_params(self):
-        cat = Catalog('ru')
+        cat = Catalog()
         self.assertIn('36.4', cat('ui.log_space', need='36.4', free='1.0'))
         self.assertEqual(cat('no.such.id'), 'no.such.id')
         self.assertIn('a, b', cat('check.release_incomplete', paths=['a', 'b']))
-        cat.set_language('de')   # unknown language falls back to English
-        self.assertEqual(cat.lang, 'en')
 
     def test_describe_and_amount(self):
-        cat = Catalog('en')
+        cat = Catalog()
         self.assertEqual(amount(cat, 6e9, 16e9, 'bytes'), '6.0 / 16.0 GB')
         self.assertEqual(amount(cat, 1, 9, 'shaders'), '1 / 9 shaders')
         self.assertEqual(amount(cat, 1, 9, 'widgets'), '1 / 9 widgets')
         line = describe_event(cat, {'type': 'step', 'step': 'check', 'state': 'done', 'seconds': 1.5})
         self.assertIn('1.5 s', line)
         self.assertEqual(describe_event(cat, {'type': 'start'}), '')
-
-    def test_windows_language_is_a_known_value(self):
-        self.assertIn(windows_ui_language(), ('en', 'ru'))
 
 
 BREAK_CHILD = 'import time\nprint("ready", flush=True)\ntime.sleep(60)\n'
@@ -304,7 +292,7 @@ class CancelTest(unittest.TestCase):
 
 
 class SmokeTest(unittest.TestCase):
-    def test_every_screen_in_both_languages(self):
+    def test_every_screen(self):
         try:
             import tkinter  # noqa: F401
         except ImportError:
@@ -403,6 +391,38 @@ class EndToEndTest(unittest.TestCase):
         self.assertTrue(cancelled)
         self.assertEqual((code, model.result), (3, 'cancelled'))
         self.assertIsNone(model.error)
+
+
+class ThemeTest(unittest.TestCase):
+    """Every text colour of every window theme (installer/gui.py THEMES) on each background it is drawn on."""
+
+    # (text key, background key) as apply_theme and App pair them; bg on accent is the main button's label.
+    PAIRS = [('text', 'bg'), ('text', 'frame'), ('text', 'field'), ('text', 'hover'), ('muted', 'bg'),
+             ('muted', 'frame'), ('accent', 'bg'), ('accent', 'frame'), ('bg', 'accent'), ('bg', 'accent_hi'),
+             ('bg', 'text'), ('err', 'bg'), ('ok', 'bg'), ('warn', 'bg'), ('disabled', 'bg')]
+
+    @staticmethod
+    def contrast(a, b):
+        """WCAG 2 contrast ratio of two #rrggbb colours."""
+        def lum(h):
+            c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
+            return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+        hi, lo = sorted((lum(a), lum(b)), reverse=True)
+        return (hi + 0.05) / (lo + 0.05)
+
+    def test_every_text_pair_reaches_4_5(self):
+        from installer.gui import THEMES
+        for name, t in THEMES.items():
+            for fg, bg in self.PAIRS:
+                with self.subTest(theme=name, pair=(fg, bg)):
+                    self.assertGreaterEqual(self.contrast(t[fg], t[bg]), 4.5)
+
+    def test_raiders_has_its_own_look(self):
+        from installer.gui import theme_for
+        self.assertIn('SPLATOON RAIDERS', theme_for('raiders')['brand'])
+        self.assertEqual(theme_for('raiders')['art'], 'splat')
+        self.assertIn('DONKEY KONG', theme_for('bananza')['brand'])
 
 
 if __name__ == '__main__':

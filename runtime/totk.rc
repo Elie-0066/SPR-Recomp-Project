@@ -1,8 +1,10 @@
 /* The application manifest of totk.exe (totk.manifest) and its icon (dkb.ico, also the icon of TotK-Setup.exe and of
-   the installer window). tools/build_game.py compiles it with the runtime objects, so it is also a member of
-   libtotkrt.a, which the release links with --whole-archive. */
+   the installer window; spr.ico for spr-recomp.exe). tools/build_game.py compiles it with the runtime objects, so it
+   is also a member of libtotkrt.a, which the release links with --whole-archive. */
 1 24 "totk.manifest"
-#ifdef GAME_ICON   /* tools/build_game.py defines it when the build folder holds a game.ico */
+#if defined(SPR_ICON)   /* tools/build_game.py OWN_ICON: Splatoon Raiders takes the project's own icon */
+1 ICON "spr.ico"
+#elif defined(GAME_ICON)   /* tools/build_game.py defines it when the build folder holds a game.ico */
 1 ICON "game.ico"
 #else
 1 ICON "dkb.ico"

@@ -98,14 +98,17 @@ also hashes kept output. `--temp` selects a workspace base, kept apart from the 
 
 - stdout: one JSON event per line, types `start`, `plan`, `step` (started, done, skipped), `progress` (step, phase,
   done/total/unit), `space`, `warning`, `error`, `end` (`installer/events.py`). Messages are ids with parameters;
-  `installer/text/<en|ru>.json` holds their text (Raiders' own ids start with `spr.`). The human-readable log goes to
+  `installer/text/en.json` holds their text (Raiders' own ids start with `spr.`). The human-readable log goes to
   `<temp>/logs/`.
 - Exit codes: 0 done, 1 failed, 2 bad command line, 3 cancelled. The window cancels with Ctrl+Break to the
   installer's process group.
 - Window (`python -m installer.gui`, `installer/gui.py` draws, `installer/guilogic.py` decides): pickers for a `.nup`
   file or the ExeFS and RomFS folders, the optional tool package, language and destination; a step list with
-  progress, a space line, a collapsible log, Cancel, and a finish screen with Open folder. English or Russian.
-  `--selftest [--shots DIR]` builds every screen in both languages and closes itself.
+  progress, a space line, a collapsible log, Cancel, and a finish screen with Open folder. English only.
+  `--selftest [--shots DIR]` builds every screen and closes itself.
+- Look (`installer/gui.py` THEMES): with `--game raiders` the window takes the in-game menu's Raiders colours
+  (night blue, cyan ink, coral), an ink-splat drawing and `runtime/spr.ico`, which `tools/make_spr_icon.py` draws and
+  `make_release.py` also links into `SPR-Setup.exe`; the other profiles keep the Donkey Kong look and `dkb.ico`.
 
 ## Release layout
 
@@ -114,7 +117,7 @@ also hashes kept output. `--temp` selects a workspace base, kept apart from the 
 
 ```
 SPR-Setup.exe         starts python/pythonw.exe -m installer.gui (installer/launcher/launcher.c, no console)
-installer/            the installer: steps, CLI, window, en/ru text catalog
+installer/            the installer: steps, CLI, window, English text catalog
 python/               Python 3.14 embeddable + the installer's packages (+ tkinter for the window)
 recomp/, tools/       the lifter, the build, the .nup reader, the shader census and the translator sources
 llvm/                 llvm-mingw, x86_64-only subset (Apache-2.0 with LLVM exception; mingw-w64 parts permissive)

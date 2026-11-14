@@ -473,7 +473,8 @@ def build_launcher(out, llvm):
     launcher_header(work / 'launcher_text.h')
     env = clean_env(llvm / 'bin')
     res = work / 'launcher_rc.o'
-    run([llvm / 'bin' / 'llvm-windres.exe', '-I', ROOT / 'runtime', '-O', 'coff',
+    icon = ['-D', 'SPR_ICON'] if GAME == 'raiders' else []   # launcher.rc: spr.ico instead of dkb.ico
+    run([llvm / 'bin' / 'llvm-windres.exe', '-I', ROOT / 'runtime', *icon, '-O', 'coff',
          ROOT / 'installer' / 'launcher' / 'launcher.rc', '-o', res], env=env)
     run([llvm / 'bin' / 'clang.exe', '-O2', '-mwindows', '-Wall', '-Wl,-s', '-I', work,
          ROOT / 'installer' / 'launcher' / 'launcher.c', res, '-o', out / (GAMES[GAME]['name'] + '.exe')], env=env)
@@ -518,7 +519,7 @@ def selftest(out, py, env):
     r = subprocess.run([py, '-m', 'installer.gui', '--selftest', '--game', game], cwd=out, env=env, capture_output=True, text=True, timeout=300)
     if r.returncode:
         sys.exit(f'bundle check: window selftest exit {r.returncode}\n{r.stdout[-2000:]}\n{r.stderr[-2000:]}')
-    print('bundle check: the window built every screen in both languages and closed')
+    print('bundle check: the window built every screen and closed')
 
 
 def sizes(out):

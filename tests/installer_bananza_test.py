@@ -772,8 +772,8 @@ a=sys.argv; out=pathlib.Path(a[a.index('--out')+1]); out.mkdir(parents=True)
         self.assertIn('--exefs', command)
         self.assertNotIn('--keys', command)
         self.assertNotIn('--update', command)
-        self.assertIn('dkb.exe' if os.name=='nt' else 'dkb', Catalog('en','bananza')('ui.done_text', dest='here'))
-        self.assertEqual(Catalog('en','totk')('ui.title'), 'TotK Setup')
+        self.assertIn('dkb.exe' if os.name=='nt' else 'dkb', Catalog('bananza')('ui.done_text', dest='here'))
+        self.assertEqual(Catalog('totk')('ui.title'), 'TotK Setup')
 
     def test_native_gui_finish_fixtures_cover_all_real_steps(self):
         from installer.gui import samples, SAMPLE_OK, SAMPLE_RUN
@@ -805,14 +805,6 @@ a=sys.argv; out=pathlib.Path(a[a.index('--out')+1]); out.mkdir(parents=True)
         self.assertEqual(result.returncode, 1, result.stderr)
         events = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertEqual(next(e['id'] for e in events if e['type']=='error'), 'dkb.exefs_invalid')
-
-    def test_catalogs_cover_same_messages_and_placeholders(self):
-        import re
-        english, russian = Catalog('en').english, Catalog('ru').texts
-        self.assertEqual(set(english), set(russian))
-        for key in english:
-            self.assertEqual(sorted(re.findall(r'\{\w+\}', english[key])),
-                             sorted(re.findall(r'\{\w+\}', russian[key])), key)
 
 
 if __name__ == '__main__':
