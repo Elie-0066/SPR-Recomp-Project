@@ -17,7 +17,7 @@ copy of the game, and the executable you build from it is for your own use only.
 
 ## Status
 
-**Early, playable in parts.** The title, the opening cutscene, the character creator, the hub and the first gameplay
+**[Download the latest release](https://github.com/Elie-0066/SPR-Recomp-Project/releases/latest)** (Windows setup, no game data). **Early, playable in parts.** The title, the opening cutscene, the character creator, the hub and the first gameplay
 zone render and play at about 60 fps on the test machine (Ryzen 5 4500, RTX 3050). Known open issue: the game's
 neural-network upscaler is stood in for by FSR 1 EASU.
 
@@ -59,7 +59,12 @@ Instructions for obtaining game files are not provided.
 
 ## Install
 
-The setup builds the game in one go from a `.nup` file or the extracted update folders, identifies the dump's version first
+Download `SPR-Setup-<version>-windows.zip` from the [latest release](https://github.com/Elie-0066/SPR-Recomp-Project/releases/latest), unpack it into an empty
+folder and run `SPR-Setup.exe`. It needs nothing else installed: the compiler, Python and the shader translator are in
+the zip. The first install recompiles the whole game on your PC and takes about 30 minutes on a 6-core CPU (lifting,
+then compiling about 280 MB of generated C, then preparing the shaders); later starts are immediate.
+
+From a source checkout, the same setup runs with the repository's Python environment. It builds the game in one go from a `.nup` file or the extracted update folders, identifies the dump's version first
 (warning when it is not the tested update 65536), and leaves a ready folder with `spr-recomp.exe` ([docs/installer.md](docs/installer.md)):
 
 ```powershell
