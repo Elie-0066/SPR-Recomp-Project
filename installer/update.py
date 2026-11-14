@@ -7,8 +7,8 @@ import os
 import re
 import urllib.request
 
-# This fork's own releases (.github/workflows/spr-release.yml): DKB Recomp's would offer a Bananza installer. While the
-# repository is private the request gets a 404 and the check says nothing.
+# This fork's own releases (.github/workflows/spr-release.yml): DKB Recomp's would offer a Bananza installer. With no
+# release published yet, or no network, the check says nothing.
 API = 'https://api.github.com/repos/Elie-0066/SPR-Recomp-Project/releases/latest'
 TIMEOUT = 3
 

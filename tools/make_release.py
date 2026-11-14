@@ -18,7 +18,7 @@ cached in toolchain/release-dl/ and checked against the sha256 in PINS; a mismat
     runtime/   libtotkrt.a (build_game.py --make-runtime-lib with llvm/), the runtime headers, romfs.c, patches.c and
                ov_zstd.c (compiled per install), deps/ (headers and import libraries of SDL3, Opus, libvpx, Vulkan and VMA)
     bin/       totk_xlate.exe (+ .id), hactool.exe, SDL3.dll (upstream), libopus-0.dll, ninja.exe
-    recomp/, tools/, data/, installer/, licenses/, THIRD_PARTY_NOTICES.md, totk.ini.example
+    recomp/, tools/, data/, installer/, licenses/, THIRD_PARTY_NOTICES.md, LICENSE, LICENSE-MIT, totk.ini.example
     VERSION    the repository's VERSION plus the commit, 0.1.0+973c626; the installer's release string
     TotK-Setup.exe  installer/launcher/launcher.c built with llvm/ (-mwindows): starts python/pythonw.exe -m installer.gui
 
@@ -427,6 +427,10 @@ def build_sources(out):
     copy_tree(ROOT / 'installer', out / 'installer', lambda r: '__pycache__' in r or r.startswith('launcher/'))
     shutil.copy2(ROOT / 'totk.ini.example', out / GAMES[GAME]['ini'])
     shutil.copy2(ROOT / 'THIRD_PARTY_NOTICES.md', out / 'THIRD_PARTY_NOTICES.md')
+    # The package carries GPL-3.0-or-later code (runtime/third_party/eglantine/) and MIT code from TotK Recomp, so both
+    # licence texts travel with it.
+    shutil.copy2(ROOT / 'LICENSE', out / 'LICENSE')
+    shutil.copy2(ROOT / 'LICENSE-MIT', out / 'LICENSE-MIT')
     (out / 'VERSION').write_text(version() + '\n', encoding='utf-8')
 
 
