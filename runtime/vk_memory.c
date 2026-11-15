@@ -311,6 +311,14 @@ static void index_put(PoolRec *r) {
     if (!pidx_insert(&pool_index, &e)) rt_fatal("vk: out of memory for the pool index");
 }
 
+int vk_pool_live(const pool_t *p) {
+    if (!p) return 0;
+    plat_mutex_lock_shared(&pool_lock);
+    int live = pidx_has_key(&pool_index, p);
+    plat_mutex_unlock_shared(&pool_lock);
+    return live;
+}
+
 static PoolRec *phys_find(const pool_t *key) {
     for (int i = 0; i < nphys; i++) if (phys_list[i]->key == key) return phys_list[i];
     return NULL;

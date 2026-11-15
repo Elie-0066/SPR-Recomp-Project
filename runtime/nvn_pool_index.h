@@ -51,6 +51,12 @@ static inline int pidx_remove(pidx *x, const void *key, pidx_ent *out) {
     }
     return 0;
 }
+// 1 when an entry is registered for key.
+static inline int pidx_has_key(const pidx *x, const void *key) {
+    for (int i = 0; i < x->n; i++)
+        if (x->e[i].key == key) return 1;
+    return 0;
+}
 // A pool whose range [lo, hi] contains [addr, addr + len], or NULL (same containment test as the old linear scan).
 static inline const pidx_ent *pidx_find(const pidx *x, uintptr_t addr, uint64_t len) {
     uintptr_t end = addr + (uintptr_t)len;

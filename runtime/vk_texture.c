@@ -232,8 +232,13 @@ static int same_but_swizzle(const TexKey *a, const TexKey *b) {
 static int tex_mirrored(const tex_t *t) {
     if (!t->mem || nvn_gpu_only((uintptr_t)t->mem)) return 0;
     if (t->has_layout) return 1;
+    // t may be the copy a descriptor slot took at RegisterTexture (vk_texture_register), resolved long after the game
+    // finalized and freed the pool object it names: Splatoon Raiders finalizes pools from several threads at once while
+    // slots still name their textures, and reading the freed object's flags crashed the replay (access violation in
+    // tex_mirrored under nvnQueueSubmitCommands). The back end's pool index holds live pools only (vk_memory.c
+    // vk_pool_live), so the object is read only while it is still registered; a dead one leaves the texture GPU-owned.
     const pool_t *p = t->pool;
-    if (!p) return 0;
+    if (!vk_pool_live(p)) return 0;
     // A CPU_NO_ACCESS pool starts with the content of the storage the game gave it, and the game ships block-compressed
     // textures there: Splatoon Raiders keeps the masks of the skin its outfits cover in such a pool (flags 0x21) and
     // combines them into the player body's opacity mask at the outfit's load. Left GPU-owned, they were never

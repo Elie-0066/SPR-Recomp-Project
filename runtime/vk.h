@@ -215,6 +215,9 @@ void vk_texture_release(const tex_t *t);   // TextureFinalize: the image stays f
 void vk_read_texels(const tex_t *t, const view_t *v, const NVNcopyRegion *r, uint8_t *dst, uint64_t row, uint64_t img);
 void vk_write_texels(const tex_t *t, const view_t *v, const NVNcopyRegion *r, const uint8_t *src, uint64_t row, uint64_t img);
 void vk_guest_written(uint64_t addr, uint64_t size);   // a host write write-watch may miss: textures there re-upload
+// 1 while p has a back-end record (vk_pool_init done, vk_pool_fini not yet): never reads *p, so a pointer to a freed
+// pool object is safe to test. Takes the pool lock; a caller holding the texture lock may call it (texture, then pool).
+int vk_pool_live(const pool_t *p);
 
 // GPU address -> backing (section 3.1). avail: bytes from offset that stay contiguous in buffer. alloc/alloc_offset:
 // the device-local memory behind physical and (through the page table) virtual pool addresses, NULL for imported pools.
