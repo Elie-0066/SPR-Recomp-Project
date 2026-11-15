@@ -899,8 +899,9 @@ static void ov_font_size(Cpu *c) {
 // face) and each CJK archive adds the one face for that language.
 //
 // A BFOTF is an sfnt behind an 8-byte header (magic, size) whose bytes from offset 4 on are XORed with one key, the
-// key being word1 ^ (file size - 8); tools/make_romfs_patches.py bfotf_swap decodes it the same way and the game's
-// sfnt loader accepts the decoded font, so the returned address and size describe the plain OpenType font.
+// key being word1 ^ (font size), the font size being the member's size less 8 and less any archive padding;
+// tools/make_romfs_patches.py bfotf_swap decodes it the same way and the game's sfnt loader accepts the decoded font,
+// so the returned address and size describe the plain OpenType or TrueType font.
 static const struct { const char *archive, *member; } builtin_source[SHARED_FONT_TYPES] = {
     {"Font.Nin_Ounce_NVN2.bfarc.zs", "scft/SpMain.bfotf"},        // standard
     {"Font_CNzh.Nin_Ounce_NVN2.bfarc.zs", "scft/DFP_GBZY7.bfttf"},  // chinese-simplified
@@ -985,17 +986,26 @@ static const uint8_t *sarc_member(const uint8_t *img, uint64_t len, const char *
 // The plain sfnt inside a BFOTF/BFTTF member, in freshly allocated memory.
 static uint8_t *bfotf_open(const uint8_t *p, uint64_t len, uint64_t *font_len, const char *what) {
     if (len < 16) rt_fatal("%s: %llu bytes is too short for a BFOTF", what, (unsigned long long)len);
-    uint32_t size = (uint32_t)(len - 8);
-    uint8_t key[4];
-    for (int i = 0; i < 4; i++) key[i] = p[4 + i] ^ (uint8_t)(size >> (8 * (3 - i)));
-    uint8_t *font = malloc(size);
-    if (!font) rt_fatal("%s: no memory for %u bytes", what, size);
-    for (uint32_t i = 0; i < size; i++) font[i] = p[8 + i] ^ key[(i + 4) % 4];
-    if (memcmp(font, "OTTO", 4) && le32(font) != 0x00010000u)
-        rt_fatal("%s: the decoded font starts with %02x %02x %02x %02x, not an sfnt", what, font[0], font[1], font[2],
-                 font[3]);
-    *font_len = size;
-    return font;
+    // The key comes from the font's own size, which the archive may pad past: the simplified Chinese DFP_GBZY7.bfttf
+    // member is one byte longer than its font. Each size up to 63 bytes short of the member is tried, and the right
+    // one is the size whose key decodes the first word to an sfnt tag (a wrong size changes a key byte and so the tag).
+    for (uint32_t pad = 0; pad < 64 && pad + 12 <= len; pad++) {
+        uint32_t size = (uint32_t)(len - 8 - pad);
+        uint8_t key[4], head[4];
+        for (int i = 0; i < 4; i++) key[i] = p[4 + i] ^ (uint8_t)(size >> (8 * (3 - i)));
+        for (int i = 0; i < 4; i++) head[i] = p[8 + i] ^ key[i];
+        // An sfnt starts with a big-endian tag: 'OTTO' for CFF outlines (the BFOTF faces), 0x00010000 or 'true' for
+        // TrueType outlines (the BFTTF CJK faces).
+        if (memcmp(head, "OTTO", 4) && memcmp(head, "\x00\x01\x00\x00", 4) && memcmp(head, "true", 4)) continue;
+        uint8_t *font = malloc(size);
+        if (!font) rt_fatal("%s: no memory for %u bytes", what, size);
+        for (uint32_t i = 0; i < size; i++) font[i] = p[8 + i] ^ key[i % 4];
+        *font_len = size;
+        return font;
+    }
+    rt_fatal("%s: no size up to 63 bytes short of the %llu-byte member decodes to an sfnt (it starts %02x %02x %02x %02x)",
+             what, (unsigned long long)len, p[8], p[9], p[10], p[11]);
+    return NULL;
 }
 
 // The built-in font of type t in guest-visible memory, decoded on first use.
