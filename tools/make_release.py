@@ -317,6 +317,23 @@ def build_llvm(out):
 
 # ---- bin/ and deps ---------------------------------------------------------------------------------------------------
 
+def check_translator(exe):
+    """Runs the staged translator's self-test the way a player's machine would: from bin/ alone, with only the
+    Windows system directory on PATH (no dotnet, no build tree). SPR Recomp 0.1.1 shipped a launcher stub that ran
+    `dotnet build/xlate/publish/totk_xlate.dll` and so worked only on the machine that built it; every shader then
+    failed to translate and the game drew a black screen. Only a NativeAOT build passes this."""
+    try:
+        r = subprocess.run([str(exe), '--probe-nvn2-c0'], cwd=exe.parent, env=clean_env(), capture_output=True,
+                           text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        sys.exit(f'{exe}: the translator does not run on its own ({e}); rebuild it with tools\\build_xlate.py')
+    if r.returncode != 0 or 'passed' not in r.stdout:
+        sys.exit(f'{exe}: the translator does not run on its own (exit {r.returncode}: '
+                 f'{(r.stdout + r.stderr).strip()[:300]}); rebuild it with tools\\build_xlate.py, which needs '
+                 'the MSVC tools for NativeAOT (docs/building.md)')
+    print(f'translator self-test: {r.stdout.strip()}', flush=True)
+
+
 def build_bin(out):
     b = out / 'bin'
     b.mkdir(parents=True, exist_ok=True)
@@ -325,6 +342,7 @@ def build_bin(out):
         if not src.is_file():
             sys.exit(f'{src}: missing; build the shader translator with: .venv\\Scripts\\python tools\\build_xlate.py')
         shutil.copy2(src, b / f)
+    check_translator(b / 'totk_xlate.exe')
     if GAME == 'totk':   # Bananza's installer extracts with its own tools, not hactool
         shutil.copy2(MAIN_ROOT / 'toolchain' / 'hactool' / 'hactool.exe', b / 'hactool.exe')
     dll = unpack('sdl3-dll') / 'SDL3.dll'

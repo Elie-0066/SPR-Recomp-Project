@@ -124,6 +124,7 @@ static volatile int64_t n_requests, n_hits, n_failures, n_keys, n_xlated;   // n
 typedef struct {                                           // one translator child
     PlatChild *child;                                      // NULL: not started
     int busy;                                              // a request owns it (under S.lock)
+    int answered;                                          // the child has sent at least one reply line
     size_t in_len;
     char inbuf[LINE_MAX_LEN * 2];
 } Svc;
@@ -401,6 +402,7 @@ static int child_start(Svc *v) {
         return 0;
     }
     v->in_len = 0;
+    v->answered = 0;
     return 1;
 }
 
@@ -420,6 +422,7 @@ static int child_exchange_raw(Svc *v, const char *line, char *reply, size_t repl
             reply[keep] = 0;
             memmove(v->inbuf, nl + 1, v->in_len - len - 1);
             v->in_len -= len + 1;
+            v->answered = 1;
             return 1;
         }
         if (v->in_len == sizeof v->inbuf) v->in_len = 0;  // an overlong line: drop it, wait for its end
@@ -506,13 +509,26 @@ static void svc_set_limit(int n) {
     plat_cond_broadcast(&S.freed);
 }
 
+// A child that started but closed its pipe before any reply: the exe is not a working translator (SPR Recomp 0.1.1
+// shipped a launcher stub that needed dotnet and a publish folder, issue #1). Its stderr goes to NUL
+// (plat_child_start), so this line is the only trace in the log; logged once per run.
+static void note_silent_child(void) {
+    static volatile int32_t logged;
+    if (plat_xchg32(&logged, 1)) return;
+    rt_log("gfx_shader: the translator %s exited before answering; every shader fails until it works. Run it with "
+           "--probe-nvn2-c0 from a command prompt to see its error", xlate_exe);
+}
+
 // One request on a child; a dead child is restarted once. 0 when the translator is unavailable. The caller has given
 // up its virtual core (kern_core_away): the wait for a child and the translation are host time.
 static int svc_request(const char *line, char *reply, size_t reply_size) {
     Svc *v = svc_get();
     int ok = 0;
     for (int attempt = 0; attempt < 2 && !ok; attempt++)
-        if (!(ok = child_exchange(v, line, reply, reply_size))) child_stop(v);
+        if (!(ok = child_exchange(v, line, reply, reply_size))) {
+            if (v->child && !v->answered) note_silent_child();
+            child_stop(v);
+        }
     svc_put(v);
     return ok;
 }
