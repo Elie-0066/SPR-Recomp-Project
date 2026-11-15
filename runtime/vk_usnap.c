@@ -297,6 +297,21 @@ const void *vk_usnap_bytes(uint64_t addr, uint64_t n) {
     return vk_usnap_find(addr, n, 1, &b) ? U.arena->map + b.offset : NULL;
 }
 
+int vk_usnap_why(uint64_t addr, uint64_t n) {
+    if (!U.on) return VK_USNAP_OFF;
+    int i = first_above(addr);
+    if (i < U.nreg && addr >= U.reg[i].lo && addr + n <= U.reg[i].hi)
+        return U.reg[i].dropped ? VK_USNAP_DROPPED : VK_USNAP_HAS;
+    // a linear scan: entries added since vk_usnap_begin's wr_prune are not sorted
+    int earlier = 0, here = 0;
+    for (int k = 0; k < U.nwr; k++)
+        if (U.wr[k].lo < addr + n && U.wr[k].hi > addr) {
+            if (U.wr[k].fence == U.fence) here = 1;
+            else earlier = 1;
+        }
+    return earlier ? VK_USNAP_INFLIGHT : here ? VK_USNAP_DROPPED : VK_USNAP_UNCOVERED;
+}
+
 void vk_usnap_drop(uint64_t addr, uint64_t n) {
     if (!U.mode || !n) return;
     if (U.nwr == U.cwr) U.wr = grow(U.wr, &U.cwr, sizeof *U.wr);

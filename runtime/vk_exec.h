@@ -123,6 +123,9 @@ int vk_exec_reset_indirect(VkExec *ex, uint64_t list_addr, uint32_t descriptor_b
 void vk_exec_pass_begin(VkExec *ex);
 // Ends the open pass (no-op without one) and marks its targets GPU-written. Call before copies and dispatches.
 void vk_exec_pass_end(VkExec *ex);
+// TOTK_TRACE=perf (vk_exec.c pe_note): the reason the next pass end counts under when it is not the op being replayed.
+enum { PE_FEEDBACK = OP_COUNT_, PE_NOATT, PE_SUBMIT_END, PE_OTHER, PE_N };
+void vk_exec_pass_cause(uint32_t cause);
 // Full memory barrier (all commands, all memory); ends the open pass first. Copies and dispatches order themselves with
 // it. Skipped when nothing was recorded since the last one.
 void vk_exec_barrier(VkExec *ex);

@@ -625,8 +625,59 @@ void vk_exec_pass_begin(VkExec *ex) {
     ex->in_pass = 1;
 }
 
+// TOTK_TRACE=perf: what ended the render passes, every 600 presented frames, for all passes and for those of 4096
+// pixels or more on a side (Splatoon Raiders paints its mission ink into a 6400x6400 map, several hundred passes a frame
+// at the boss). The cause is the op being replayed (walk) or one of the PE_* reasons a caller names (vk_exec_pass_cause).
+// Replay thread only.
+static uint32_t pe_cause = PE_OTHER;
+static uint64_t pe_all[PE_N], pe_big[PE_N], pe_frame;
+
+void vk_exec_pass_cause(uint32_t cause) { pe_cause = cause < PE_N ? cause : PE_OTHER; }
+
+static const char *pe_name(uint32_t c) {
+    return c < OP_COUNT_ ? nvn_op_name(c) : c == PE_FEEDBACK ? "feedback restart" : c == PE_NOATT ? "no-attachment resize"
+         : c == PE_SUBMIT_END ? "submission end" : "other";
+}
+
+static void pe_list(char *buf, size_t cap, const uint64_t *n, double frames) {
+    uint64_t left[PE_N];
+    memcpy(left, n, sizeof left);
+    size_t o = 0;
+    buf[0] = 0;
+    for (int k = 0; k < 8 && o < cap; k++) {
+        int best = -1;
+        for (int i = 0; i < PE_N; i++)
+            if (left[i] && (best < 0 || left[i] > left[best])) best = i;
+        if (best < 0) break;
+        int w = snprintf(buf + o, cap - o, "%s %s %.1f", o ? "," : "", pe_name((uint32_t)best), (double)left[best] / frames);
+        if (w < 0) break;
+        o += (size_t)w;
+        left[best] = 0;
+    }
+}
+
+static void pe_note(const VkExec *ex) {
+    uint32_t c = pe_cause < PE_N ? pe_cause : PE_OTHER;
+    pe_all[c]++;
+    if (ex->pass_w >= 4096 || ex->pass_h >= 4096) pe_big[c]++;
+    uint64_t f = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
+    if (!pe_frame) pe_frame = f ? f : 1;
+    if (f < pe_frame + 600) return;
+    double frames = (double)(f - pe_frame);
+    uint64_t na = 0, nb = 0;
+    for (int i = 0; i < PE_N; i++) na += pe_all[i], nb += pe_big[i];
+    char a[400], b[400];
+    pe_list(a, sizeof a, pe_all, frames);
+    pe_list(b, sizeof b, pe_big, frames);
+    rt_log("vk_exec: pass ends per frame over %.0f frames: all %.1f (%s); targets of 4096+ %.1f (%s)", frames,
+           (double)na / frames, na ? a : "none", (double)nb / frames, nb ? b : "none");
+    memset(pe_all, 0, sizeof pe_all), memset(pe_big, 0, sizeof pe_big);
+    pe_frame = f;
+}
+
 void vk_exec_pass_end(VkExec *ex) {
     if (!ex->in_pass) return;
+    if (rt_trace & RT_TRACE_PERF) pe_note(ex);
     vk_exec_oq_pass_end(ex);
     vkCmdEndRendering(ex->cb);
     ex->recorded++;
@@ -977,6 +1028,7 @@ static void walk(VkExec *ex, const op_hdr *h, int depth) {
         if (h->size < sizeof *h || (h->size & 7) || h->op >= OP_COUNT_)
             rt_fatal("vk: corrupt command record at %p: op %u size %u", (const void *)h, h->op, h->size);
         const void *a = nvn_op_payload(h);
+        pe_cause = h->op;   // TOTK_TRACE=perf: a pass this op ends counts under it (pe_note)
         switch (h->op) {
         case OP_END: return;
         case OP_BEGIN: break;
@@ -1095,6 +1147,7 @@ static int record_impl(VkCommandBuffer cb, const uint64_t *handles, int n, uint6
             walk(ex, nvn_op_first(handles[i]), 0);
         }
     }
+    pe_cause = PE_SUBMIT_END;
     vk_exec_pass_end(ex);
     gpuprof_mark(ex, 0xFFF2);
     x_here = 0;

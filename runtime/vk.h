@@ -290,6 +290,11 @@ void vk_usnap_begin(const uint64_t *handles, int n, uint64_t fence);
 void vk_usnap_end(uint64_t fence);
 int vk_usnap_find(uint64_t addr, uint64_t n, uint64_t align, VkDescriptorBufferInfo *out);
 const void *vk_usnap_bytes(uint64_t addr, uint64_t n);   // the copy's bytes for the CPU; NULL: not copied or dropped
+// Why vk_usnap_bytes has no copy of [addr, addr+n) (a diagnostic): no snapshot this submission, a GPU write earlier in
+// this submission dropped it, a GPU write of an earlier submission was still in flight at its start, or no binding of
+// it in an imported pool was collected.
+enum { VK_USNAP_HAS, VK_USNAP_OFF, VK_USNAP_DROPPED, VK_USNAP_INFLIGHT, VK_USNAP_UNCOVERED, VK_USNAP_WHY_N };
+int vk_usnap_why(uint64_t addr, uint64_t n);
 void vk_usnap_drop(uint64_t addr, uint64_t n);   // the replay makes the GPU write [addr, addr+n) of guest memory
 void vk_usnap_note_write(uint64_t addr, uint64_t n);   // as vk_usnap_drop for later submissions; this one's copies stay
 uint64_t vk_usnap_arena_bytes(void);                 // arenas created so far (all kept until shutdown)

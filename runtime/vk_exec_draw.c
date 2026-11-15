@@ -1205,7 +1205,11 @@ static int ubo_ptr_res(const GfxShaderRes *r) {
 // into the buffer's GPU copy; guest memory gets them only from the write-back when the submission ends. The terrain
 // rewrites its pointer block this way before every draw, all at one address, so ubo_ptr reads the latest update that
 // covers the pointer, else memory. Payloads stay in the recorded command buffer for the whole replay.
-#define UPD_N 4096
+// Splatoon Raiders' mission boss updates its ink splats' uniform block before each splat: up to 7,985 updates in one
+// submission were measured (TOTK_TRACE=perf, ubw_note), where a ring of 4096 sent every update past the 4,095th back
+// to the in-place path, each one ending the 6400x6400 ink pass behind a full barrier (up to 1,958 a frame, 30 fps).
+// 32768 entries take 768 KiB.
+#define UPD_N 32768
 static struct {
     uint64_t fence;                      // the submission the entries belong to
     uint32_t n;                          // updates noted in it
@@ -1378,6 +1382,8 @@ void vk_exec_ub_flush(VkExec *ex) {
 // 1 when an update of this submission supplied [a, a+n).
 static int upd_read(const VkExec *ex, uint64_t a, void *out, size_t n) {
     if (UPD.fence != ex->fence) return 0;
+    // outside every update of the submission (upd_note keeps the bounds): no walk over the ring
+    if (UBD.fence == ex->fence && (a >= UBD.hi || a + n <= UBD.lo)) return 0;
     for (uint32_t i = UPD.n, end = UPD.n > UPD_N ? UPD.n - UPD_N : 0; i-- > end;) {
         const typeof(UPD.u[0]) *e = &UPD.u[i % UPD_N];
         if (a >= e->hi || a + n <= e->lo) continue;
@@ -1617,6 +1623,7 @@ static uint32_t feedback_prepare(VkExec *ex, const GfxShader *fs) {
                 const VkExecTarget *t = i < 8 ? &ex->color[i] : &ex->depth;
                 if ((d >> i & 1) && t->img && t->img->fb_usage) ((VkTexImage *)t->img)->fb_learned = 1;
             }
+        vk_exec_pass_cause(PE_FEEDBACK);
         vk_exec_pass_end(ex);
         vk_exec_pass_begin(ex);   // learned targets now in the feedback layout; the full barrier cleared fb_dirty
         vk_exec_frame.fb_restarts++;
@@ -2820,7 +2827,7 @@ static int prepare_draw_impl(VkExec *ex, int prim, int32_t count, int restart) {
     if (ex->pass_noatt) {   // no attachment: the pass covers this draw's viewport or scissor, reopened when it needs more
         uint32_t w, h;
         vk_exec_noatt_dims(ex, &w, &h);
-        if (ex->in_pass && (w > ex->pass_w || h > ex->pass_h)) vk_exec_pass_end(ex);
+        if (ex->in_pass && (w > ex->pass_w || h > ex->pass_h)) vk_exec_pass_cause(PE_NOATT), vk_exec_pass_end(ex);
         if (!ex->in_pass) ex->rt_resolved = 0;
     }
     if (!ex->in_pass) ex->dirty |= VK_EXEC_DIRTY_VIEWPORT | VK_EXEC_DIRTY_SCISSOR;
@@ -3572,6 +3579,42 @@ static void ub_count(int deferred, const p_update_ub *u) {
     logs++;
 }
 
+// TOTK_TRACE=perf: why uniform updates were written in place (each one ends the render pass behind a full barrier),
+// every 600 presented frames: all in-place updates by reason, the first one of each submission by reason (an update
+// written in place drops the block's snapshot, so the rest of that submission's updates to the block follow it as
+// "dropped"), the deferred ones, and the most updates one submission noted against the ring of UPD_N.
+enum { UBW_RING = VK_USNAP_WHY_N, UBW_BIG, UBW_N };
+static const char *const ubw_name[UBW_N] = {"?", "no snapshot this submission", "dropped in this submission",
+                                            "GPU write of an earlier submission in flight", "not collected",
+                                            "ring full", "over 64 KiB"};
+static struct { uint64_t all[UBW_N], first[UBW_N], deferred, frame, fence, max_n; int first_seen; } UBW;
+
+static void ubw_note(const VkExec *ex, int deferred, int why) {
+    if (UPD.fence == ex->fence && UPD.n > UBW.max_n) UBW.max_n = UPD.n;
+    if (deferred) UBW.deferred++;
+    else {
+        UBW.all[why]++;
+        if (UBW.fence != ex->fence) UBW.fence = ex->fence, UBW.first[why]++;
+    }
+    uint64_t f = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
+    if (!UBW.frame) UBW.frame = f ? f : 1;
+    if (f < UBW.frame + 600) return;
+    double fr = (double)(f - UBW.frame);
+    char all[480] = "", first[480] = "";
+    size_t oa = 0, of = 0;
+    for (int i = 1; i < UBW_N; i++) {
+        if (UBW.all[i] && oa < sizeof all)
+            oa += (size_t)snprintf(all + oa, sizeof all - oa, "%s %s %.1f", oa ? "," : "", ubw_name[i], UBW.all[i] / fr);
+        if (UBW.first[i] && of < sizeof first)
+            of += (size_t)snprintf(first + of, sizeof first - of, "%s %s %.1f", of ? "," : "", ubw_name[i], UBW.first[i] / fr);
+    }
+    rt_log("vk_exec: uniform updates per frame over %.0f frames: %.1f deferred; in place (%s); first in place of a "
+           "submission (%s); at most %llu in one submission (ring %d)", fr, UBW.deferred / fr, oa ? all : "none",
+           of ? first : "none", (unsigned long long)UBW.max_n, UPD_N);
+    memset(UBW.all, 0, sizeof UBW.all), memset(UBW.first, 0, sizeof UBW.first);
+    UBW.deferred = UBW.max_n = 0, UBW.frame = f;
+}
+
 static void op_update_ub(VkExec *ex, const p_update_ub *u) {
     if (!u->size) return;
     VkMemSpan sp;
@@ -3585,9 +3628,15 @@ static void op_update_ub(VkExec *ex, const p_update_ub *u) {
         UBD.pending++;
         ex->recorded++;   // the submission has work: its closing barrier flushes the copies
         ub_count(1, u);
+        if (rt_trace & RT_TRACE_PERF) ubw_note(ex, 1, 0);
         return;
     }
     ub_count(0, u);
+    if (rt_trace & RT_TRACE_PERF) {
+        int why = !ub_defer_on() ? VK_USNAP_OFF : u->size > UBS_MAX ? UBW_BIG
+                : UPD.fence == ex->fence && UPD.n >= UPD_N - 1 ? UBW_RING : vk_usnap_why(u->dst, u->size);
+        ubw_note(ex, 0, why);
+    }
     vk_exec_barrier(ex);   // earlier draws finished with the old contents; deferred updates go in first (barrier_to)
     VkBuffer b;
     VkDeviceSize o;
