@@ -3413,9 +3413,10 @@ static int dlss_upscale(VkExec *ex, const GfxShader *cs) {
 }
 
 // Tells the HUD (resolution.c res_note_upscaler) the sizes of every dispatch of the game's upscaler, whatever replaces
-// it (blit, DLSS) or none: same slots as dlss_upscale, the input texture 0 and the output image 1.
-static void note_upscaler(VkExec *ex, const GfxShader *cs) {
-    if (!mvk_upscale_cs(gfx_shader_spirv_fnv(cs))) return;
+// it (blit, DLSS) or none: same slots as dlss_upscale, the input texture 0 and the output image 1. known: the caller
+// already matched it (Raiders' network, raiders_upscaler); otherwise Bananza's hashes decide.
+static void note_upscaler(VkExec *ex, const GfxShader *cs, int known) {
+    if (!known && !mvk_upscale_cs(gfx_shader_spirv_fnv(cs))) return;
     uint64_t hs = ex->tex[NVN_STAGE_CS][0], hd = ex->img[NVN_STAGE_CS][1];
     view_t vs, vd;
     int hvs = 0, hvd = 0;
@@ -3473,7 +3474,7 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
         if (raiders_upscale(ex)) {
             ex->recorded++;
             vk_exec_barrier(ex);
-            note_upscaler(ex, cs);
+            note_upscaler(ex, cs, 1);
             note_work(ex, 2, (uint64_t)d->x * (uint64_t)d->y * (uint64_t)d->z);
             return;
         }
@@ -3484,7 +3485,7 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
                        "replaced by a linear blit of its input to its output");
             ex->recorded++;
             vk_exec_barrier(ex);
-            note_upscaler(ex, cs);
+            note_upscaler(ex, cs, 1);
             note_work(ex, 2, 0);   // the blit, for the GPU profile (vk_gpuprof.c)
             return;
         }
@@ -3499,7 +3500,7 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
     twin_dispatch = 1;
     bind_resources(ex, info);
     twin_dispatch = 0;
-    note_upscaler(ex, cs);
+    note_upscaler(ex, cs, 0);
     int blit = mvk_upscale_blit(ex, cs, 0);
     int dlss = blit ? 0 : dlss_upscale(ex, cs);
     if (dlss) vk_exec_draw_new_cb(), ex->dirty = VK_EXEC_DIRTY_ALL;   // NGX left its own pipeline, descriptors and state

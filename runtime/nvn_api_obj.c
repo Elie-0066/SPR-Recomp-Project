@@ -699,8 +699,10 @@ NVN_API(nvnWindowInitialize) {
     }
     memcpy(o->tex, s->tex, sizeof o->tex);
     const tex_t *t0 = (const tex_t *)o->tex[0];
-    NVN_LOG("WindowInitialize %d textures, interval %d, first %ux%u format %#x", o->ntex, o->interval,
-            t0 ? t0->d.width : 0, t0 ? t0->d.height : 0, t0 ? t0->d.format : 0);
+    char who[160];
+    rt_log("nvn: window %p: %d textures, interval %d, first %ux%u format %#x (from %s)", (void *)o, o->ntex,
+           o->interval, t0 ? t0->d.width : 0, t0 ? t0->d.height : 0, t0 ? t0->d.format : 0,
+           ldr_describe(c->x[30] - 4, who, sizeof who));
     ret_x(c, 1);
 }
 // void nvnWindowFinalize(NVNwindow *w): nothing to release (MNG lists it in g_nops)
@@ -715,7 +717,12 @@ NVN_API(nvnWindowSetPresentInterval) {
 NVN_API(nvnWindowSetCrop) {
     win_t *o = WN(c);
     int v[4] = {(int)arg_x(c, 1), (int)arg_x(c, 2), (int)arg_x(c, 3), (int)arg_x(c, 4)};
-    if (memcmp(o->crop, v, sizeof v)) NVN_LOG("WindowCrop %d,%d %dx%d", v[0], v[1], v[2], v[3]);
+    static int logged;
+    if (memcmp(o->crop, v, sizeof v) && logged++ < 8) {
+        char who[160];
+        rt_log("nvn: window %p crop %d,%d %dx%d (from %s)", (void *)o, v[0], v[1], v[2], v[3],
+               ldr_describe(c->x[30] - 4, who, sizeof who));
+    }
     memcpy(o->crop, v, sizeof v);
 }
 

@@ -8,7 +8,8 @@ SPR Recomp: a static recompilation of *Splatoon Raiders* (Switch 2) to a native 
 
 - The title, the opening cutscene, the character creator, the hub and the first gameplay zone render and play at about 60 fps on an RTX 3050, with the player's body drawn.
 - The game's neural-network upscaler is stood in for by FSR 1 EASU.
-- The settings that act on Bananza patch sets (resolution, ultrawide, real-time frame timing) are hidden in the Raiders menu: the build has no patch sets.
+- Resolution (F1 menu, Graphics, after restart): 1080p, 1440p or 4K docked; handheld renders 1280x720 at 1080p and 1920x1080 above. The higher modes are the game's own and have not been played through whole missions yet.
+- The settings that act on Bananza patch sets (render scale, ultrawide, real-time frame timing) are hidden in the Raiders menu: the build has no patch sets.
 
 ## Requirements (Windows)
 

@@ -105,6 +105,19 @@ Each one cost a session; they are listed so the next one does not repeat the sea
 - **Staged mirror uploads, and what they did not fix.** `vk_memory.c` `stage_ranges` copies the pages a mirror needs on the CPU at record time instead of reading guest memory when the GPU runs the copy (`DKB_MIRROR_STAGE=0` turns it off; at most 8 MiB per prologue, a new pool's first whole copy still goes straight). With it, `DKB_SUBMIT_WAIT=0` still flickers, so the present wait stays; it also costs less than it seemed (16.9 against 17.6 ms a frame without it). `DKB_MIRROR_DIFF_MIN=<KiB>` lowers the write-back-by-difference threshold for experiments.
 - **The GPU fault on entering gameplay (fixed, to be confirmed over more runs).** Runs ended with a device fault (a write at 0, or a read at an address no buffer ever had) right after "write-back by difference on". `DKB_GPU_CHECKPOINTS=1` with `TOTK_CRUMB_BIND=1` put it in the difference dispatch itself (`vk_memory.c` `diff_run`, named "MIRRDIFF" in the report): it pushed its descriptors through the device function pointer instead of `rec_push`, so the push went into the replay part on the replaying thread while the recorder thread (`vk_rec.h`) was still making the commands queued before it. The more work queued at that point, the likelier the collision: the upscale shader made it happen on nearly every run.
 - **The player's missing body (fixed).** The characters' colour pass draws with depth EQUAL against their own depth pass, and the body was absent from that depth pass: its draw (`vs 073923a348551a68`) alpha-tests an opacity mask, a 128x128 BC4 texture the game builds at the outfit's load. It draws two masks into R8 targets, combines them with two BC4 textures and encodes the result through an RGBA16UI view of the mask's blocks, one pass per level. One of the two inputs sits in a pool with `CPU_NO_ACCESS` (flags 0x21) whose storage holds the game's data; `vk_texture.c` `tex_mirrored` made every texture of such a pool GPU-owned, so it was never uploaded, the combined mask was zero and the body's alpha test discarded it. Block-compressed textures of `CPU_NO_ACCESS` pools that are not compressible are now mirrored. Found with `TOTK_DUMP=bcview` (the dump starts at the first draw into a BC block view), `TOTK_DUMP_VBUF=1` and `DKB_DUMP_UBO=<n>`.
+- **Resolution: 1440p and 4K are the game's own modes** (`raiders_res`, the *Resolution* row of the F1 menu's
+  graphics group). The graphics module's resolution update (`main+34eb2c0`) caps the output by a table at
+  `main+4162c24` (640x480, 720x480, 1280x720, 1600x900, 1920x1080, 2560x1440, 3840x2160) indexed by the operation mode
+  and by `nn::oe::GetCurrentGraphicsScale`, which `main+3e91510` stores in the resolution object's `+0x549`: docked,
+  index `6 - scale` (0 is 3840x2160, 1 is 2560x1440, 2 is 1920x1080); handheld, 1280x720 at scale 2 and 1920x1080
+  below. From that output it derives the size factors of its 39 render targets (`+0x528`, applied in `main+34e0980`),
+  the 3D scene (four fifths of the output) and the window crop; its window textures are 3840x2160 in every mode. The
+  host answered 2, Bananza's choice, so the game held 1080p docked and 720p handheld. `ov_system.c`
+  `ov_graphics_scale` answers 2, 1 or 0 for `raiders_res = 1080p | 1440p | 2160p`. Checked at the title screen: docked
+  4K presents 3840x2160 at 47 fps on the RTX 3050, handheld above 1080p presents 1920x1080. Not yet run through a
+  mission at 4K. Not live: the game reacts to the graphics-scale notification (`main+3e91528`, message 0x12c), which
+  the host does not send yet. `Gyml/Default.game__gfx__parameter__ModuleParam.bgyml`'s `ResolutionSetting` does not
+  set the resolution: the game kept 1280x720 handheld with its `Handheld` values at 1440.
 
 ### Lifter gaps found and closed
 

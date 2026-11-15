@@ -76,6 +76,10 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_RENDER_SCALE_DESC] = "Size of the 3D scene relative to the game resolution; the game's FSR scales it to "
                                   "that size. Above 100 % smooths jagged edges (supersampling) at a high GPU cost.",
     [UI_MENU_RENDER_SCALE_GAME] = "Game (83 %)",
+    [UI_MENU_RAIDERS_RES] = "Resolution",
+    [UI_MENU_RAIDERS_RES_DESC] = "The output the game renders for, as a Switch 2 on a TV of that resolution: docked "
+                                 "1920 x 1080, 2560 x 1440 or 3840 x 2160; handheld 1280 x 720 at 1080p and "
+                                 "1920 x 1080 above. Higher needs more video memory and GPU time.",
     [UI_MENU_UPSCALER] = "Scaling to the window",
     [UI_MENU_UPSCALER_DESC] = "How the picture is scaled when the window is larger than the game resolution. FSR keeps "
                               "edges and detail sharper than bilinear.",
@@ -395,6 +399,10 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_RENDER_SCALE_DESC] = "Размер 3D-сцены относительно разрешения игры; FSR игры доводит её до этого размера. "
                                   "Выше 100 % сглаживает лесенки на краях (суперсэмплинг) ценой большой нагрузки на GPU.",
     [UI_MENU_RENDER_SCALE_GAME] = "Как в игре (83 %)",
+    [UI_MENU_RAIDERS_RES] = "Разрешение",
+    [UI_MENU_RAIDERS_RES_DESC] = "Вывод, под который рисует игра, как Switch 2 на телевизоре с таким разрешением: в "
+                                 "док-станции 1920 × 1080, 2560 × 1440 или 3840 × 2160; в портативном режиме 1280 × 720 "
+                                 "при 1080p и 1920 × 1080 выше. Чем выше, тем больше видеопамяти и времени GPU.",
     [UI_MENU_UPSCALER] = "Масштабирование под окно",
     [UI_MENU_UPSCALER_DESC] = "Как картинка растягивается, когда окно больше разрешения игры. FSR сохраняет края и "
                               "детали чётче билинейного.",

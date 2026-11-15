@@ -757,7 +757,12 @@ static void tab_screen(float scale) {
     static const UiTextId perf[] = {UI_MENU_PERF_OFF, UI_MENU_PERF_FPS, UI_MENU_PERF_FULL};
     opt_choice("TOTK_PERF_OVERLAY", UI_MENU_PERF_OVERLAY, perf, 3, UI_MENU_PERF_OVERLAY_DESC);
     opt_group(UI_MENU_GRAPHICS);
-    if (rt_game_version) row_render_scale();   // TotK only: Bananza's 3D size is the game's own
+    if (rt_game_version) row_render_scale();   // TotK only: Bananza's and Raiders' 3D size is the game's own
+    if (raiders()) {   // ov_system.c ov_graphics_scale: the display class the game sizes its output for
+        static const char *const vals[] = {"1080p", "1440p", "2160p"};
+        static const char *const names[] = {"1080p", "1440p", "4K (2160p)"};
+        opt_choice_list("TOTK_RAIDERS_RES", UI_MENU_RAIDERS_RES, vals, names, 3, UI_MENU_RAIDERS_RES_DESC);
+    }
     static const UiTextId up[] = {UI_MENU_UPSCALER_FSR, UI_MENU_UPSCALER_BILINEAR};
     opt_choice("TOTK_UPSCALER", UI_MENU_UPSCALER, up, 2, UI_MENU_UPSCALER_DESC);
     opt_slider("TOTK_SHARPNESS", UI_MENU_SHARPNESS, 0, 100, UI_MENU_SHARPNESS_DESC, 5, "%.0f %%");

@@ -1054,7 +1054,25 @@ static void ov_builtin_font(Cpu *c) {
 // int nn::oe::GetCurrentGraphicsScale(): an enum 0-2; main+0x4686d4 maps it through a float table {3, 12, 16} and
 // ignores anything above 2. The host is a docked console with the most to give, so the highest value. Unverified
 // against hardware: what the three levels mean is not known.
-static void ov_graphics_scale(Cpu *c) { ret_x(c, 2); }
+// Splatoon Raiders reads it as the output class of the display (main+3e91510's handler stores it in the resolution
+// object's +0x549; main+34eb2c0 caps the game's output size by a table at main+4162c24 indexed with it): docked, 0 is
+// 3840x2160, 1 is 2560x1440 and 2 is 1920x1080; handheld, 2 caps at 1280x720 and 0 or 1 at 1920x1080. The game sizes
+// its render targets, its 3D scene and the window crop from that output (its window textures are 3840x2160 whatever
+// the class), so this one value is its resolution setting. TOTK_RAIDERS_RES picks it: 1080p (the default, the value
+// the host always gave, as above), 1440p or 2160p.
+static void ov_graphics_scale(Cpu *c) {
+    static int v = -1;
+    if (v < 0) {
+        v = 2;
+        if (!strcmp(rt_game_target, "raiders")) {
+            const char *r = cfg_value("TOTK_RAIDERS_RES");
+            v = !strcmp(r, "2160p") ? 0 : !strcmp(r, "1440p") ? 1 : 2;
+            rt_log("oe: graphics scale %d reported to the game (raiders_res = %s: docked %s, handheld %s)", v, r,
+                   v == 0 ? "3840x2160" : v == 1 ? "2560x1440" : "1920x1080", v == 2 ? "1280x720" : "1920x1080");
+        }
+    }
+    ret_x(c, (uint64_t)v);
+}
 // void nn::oe::SetGraphicsScaleChangedNotificationEnabled(bool): the scale never changes on the host
 static void ov_graphics_scale_notify(Cpu *c) { (void)c; }
 // void nn::oe::SetAlbumImageOrientation(album::ImageOrientation): there is no capture album
