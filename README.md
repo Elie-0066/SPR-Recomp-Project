@@ -13,6 +13,8 @@ Switch services and answers NVN 2 graphics calls through Vulkan.
 **This project is not affiliated with or endorsed by Nintendo. It contains no game code or data: you need your own
 copy of the game, and the executable you build from it is for your own use only. Do not share builds.**
 
+If you are playing on AMD GPus please see [AMD graphics cards](#amd-graphics-cards).
+
 (This is also HEAVILY Vibecoded and experimental just so you know, if there is any problem let me know, also yes it was played and tested on a very cheap PC)
 
 ## Status
