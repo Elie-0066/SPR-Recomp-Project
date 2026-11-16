@@ -217,6 +217,7 @@
  "dkb.elevation_required": "Windows asked for administrator rights to start {exe}. Right-click it, choose Properties, Compatibility, and clear \"Run this program as an administrator\" (also under \"Change settings for all users\"). Check that your antivirus did not touch it, or run the setup once as administrator. Then run the setup again; it resumes.",
  "dkb.patches_missing": "The generated code lacks the required Bananza patch table. Setup stopped before compiling.",
  "dkb.need_nup": "Choose an existing .nup file.",
+ "dkb.nup_moved": "The .nup file this folder was built from is no longer at {path}. Choose it again in the .nup field, wherever it is now; the install in this folder is kept and updated.",
  "dkb.nup_and_folders": "Choose either a .nup file or ExeFS and RomFS folders, not both.",
  "dkb.nup_invalid": "{path} cannot be used as a .nup container: {detail}.",
  "dkb.nup_version": "{path} holds Bananza {version} (title version {title_version}), which this setup does not support. Supported: 1.0.0 and 3.2.0. To build the base 1.0.0 from the same file, run the command-line setup with --nup-package base.",

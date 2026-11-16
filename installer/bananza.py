@@ -281,6 +281,8 @@ def preflight(layout, options, dest, temp, rep):
             ensure_plain(p.absolute())
         nup = nup_arg.resolve()
         if not nup.is_file():
+            if not getattr(options, 'nup', None) and recorded.get('nup'):   # the path came from the earlier install
+                raise InstallError('dkb.nup_moved', path=str(nup))
             raise InstallError('dkb.need_nup')
         rep.progress('check', 'dkb_base')
         game, hashes, files = nup_source(layout, nup, select)
