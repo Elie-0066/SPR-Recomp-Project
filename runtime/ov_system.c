@@ -1077,6 +1077,10 @@ static void ov_graphics_scale(Cpu *c) {
         if (!strcmp(rt_game_target, "raiders")) {
             const char *r = cfg_value("TOTK_RAIDERS_RES");
             v = !strcmp(r, "2160p") ? 0 : !strcmp(r, "1440p") ? 1 : 2;
+            if (raiders_wide_class() >= 0) {   // resolution.c: the wide size sits in the class 1 entry
+                v = raiders_wide_class();
+                r = cfg_value("TOTK_RAIDERS_WIDE");
+            }
             rt_log("oe: graphics scale %d reported to the game (raiders_res = %s: docked %s, handheld %s)", v, r,
                    v == 0 ? "3840x2160" : v == 1 ? "2560x1440" : "1920x1080", v == 2 ? "1280x720" : "1920x1080");
         }

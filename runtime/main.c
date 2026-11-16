@@ -160,6 +160,14 @@ const RtConfig *rt_config(void) { return &cfg; }
 // ---- runtime services the generated code calls (cpu.h)
 volatile int g_fnprof = 0;
 void fnprof_hit(uint64_t addr, uint64_t lr, uint64_t x0) {
+    // Splatoon Raiders' ultrawide turns these calls on to adjust its projections (resolution.c raiders_wide_init);
+    // the watch below is for the other targets.
+    static int raiders = -1;
+    if (__builtin_expect(raiders < 0, 0)) raiders = !strcmp(rt_game_target, "raiders");
+    if (raiders) {
+        if (addr == 0x70031f1940ull) raiders_wide_projection(x0);
+        return;
+    }
     static uint64_t last_obj = UINT64_MAX, last_vptr = UINT64_MAX;
     if (!ldr_count()) return;
     const RtLoaded *main = ldr_module(0);

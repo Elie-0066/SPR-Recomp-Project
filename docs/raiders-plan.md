@@ -126,6 +126,20 @@ Each one cost a session; they are listed so the next one does not repeat the sea
   the host does not send yet. `Gyml/Default.game__gfx__parameter__ModuleParam.bgyml`'s `ResolutionSetting` does not
   set the resolution: the game kept 1280x720 handheld with its `Handheld` values at 1440.
 
+- **Ultrawide** (`raiders_wide`, the *Ultrawide* row of the F1 menu's picture group: off, 21:9 = 2560x1080,
+  32:9 = 3072x864). The output size is set by `main+34eb2c0`: the size the display mode asks for (3840x2160 docked,
+  times a per-class float, 0.8 at class 1) capped by the table at `main+4162c24`, then stored at the resolution
+  object's `+0x10`. It recomputes only when the class changes, so at class 0 (2160p, the object's initial state) the
+  table is never read. `resolution.c` `raiders_wide_init` writes the wide size over the class 1 entry at boot and
+  `ov_graphics_scale` reports class 1: the game composes 2560x1080 (window crop 2560x1080, 3D scene 1707x720). 3072 is
+  the widest class 1 asks for. The cameras are sead's `PerspectiveProjection` (constructor `main+3d76360`: tan of half
+  the fovy at `+0xac`, aspect 16/9 at `+0xb0`); its matrix (`main+31f1940`, a vtable entry six functions also call
+  directly) gets the output's aspect from `raiders_wide_projection`, run at that function's entry through
+  `cpu.h` `FN_ENTER` for every caller; projections at other aspects (shadows, probes) stay. The HUD keeps its 16:9
+  layout, centred. Checked on an RTX 3050 in the first zone at 60 fps, windowed and fullscreen on a 2560x1080 screen.
+  `FN_ENTER` calls the host at every guest function entry while it is on; a lifter patch at `main+31f1940` would
+  remove that cost.
+
 ### Lifter gaps found and closed
 
 The DKB lifter had all Switch 2 additions except two instructions used by this game's `sdk` (62 sites total):

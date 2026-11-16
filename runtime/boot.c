@@ -103,6 +103,7 @@ static void cb_module_inits(Cpu *c) {
     if (!strcmp(rt_game_target, "raiders")) {
         uint64_t am_init = ldr_symbol("_ZN2nn2am37InitializeSystemApplicationInterfacesEv");
         if (!am_init) rt_fatal("boot: Raiders SDK has no nn::am::InitializeSystemApplicationInterfaces");
+        raiders_wide_init();
         rt_log("boot: initialize the AM system interfaces before graphics startup");
         rt_call(c, am_init, 0);
     }

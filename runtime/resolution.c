@@ -35,7 +35,9 @@
 #include <zstd.h>
 
 #include "cfg.h"
+#include "cpu.h"
 #include "host.h"
+#include "platform/platform.h"
 #include "nvn_api.h"
 #include "res_upscaler.h"
 
@@ -320,4 +322,77 @@ int res_sizes(unsigned out[2], unsigned scene[2]) {
     out[0] = R.on ? R.ow : BASE_W, out[1] = R.on ? R.oh : BASE_H;
     scene[0] = R.on ? R.sw : SCENE_W, scene[1] = R.on ? R.sh : SCENE_H;
     return 1;
+}
+
+// ---- Splatoon Raiders ultrawide (TOTK_RAIDERS_WIDE: off, 21:9 = 2560x1080, 32:9 = 3072x864)
+// The graphics module's resolution update (main+34eb2c0) takes the size the display mode asks for (3840x2160 docked,
+// times a float of the display class: 0.8 at class 1, 3072x1728) and caps each side by the class's entry of the table
+// at main+4162c24 (640x480 ... 3840x2160), then sizes its render targets, its 3D scene (two thirds of the output) and
+// the window crop from the result. It recomputes only when the class changes, so class 0 (2160p, the resolution
+// object's initial state) never reads the table. raiders_wide_init writes the wide size over the class 1 entry
+// (2560x1440) and ov_system.c ov_graphics_scale then reports class 1: the game composes its frame at that size, as the
+// window crop and the upscaler show (1707x720 -> 2560x1080). 3072 is the widest class 1 asks for.
+// The cameras keep 16:9 by themselves: sead's PerspectiveProjection (constructor main+3d76360: tan of half the fovy at
+// +0xac, aspect at +0xb0) holds 16/9, and its matrix (main+31f1940, a vtable entry that six functions also call
+// directly) would stretch the picture. raiders_wide_projection runs at that function's entry for every caller (cpu.h
+// FN_ENTER, with the projection in x0) and replaces an aspect of 16:9 by the output's before the matrix is built;
+// other aspects (the 4:3 and 1:1 projections of shadows and probes) stay. The field keeps the wide value, so the
+// projection's own screen-to-camera conversions agree with the matrix.
+// The cost: FN_ENTER calls the host at every guest function entry while the hook is on.
+#define RAIDERS_RES_TABLE 0x7004162c24ull   // {w, h} uint32 pairs, class 1 at index 5
+#define RAIDERS_PROJ_MATRIX 0x70031f1940ull
+
+static struct { unsigned w, h; float aspect; int on; } RW;
+
+static void raiders_wide_decide(void) {
+    static int done;
+    if (done) return;
+    done = 1;
+    if (strcmp(rt_game_target, "raiders")) return;
+    const char *v = cfg_value("TOTK_RAIDERS_WIDE");
+    if (!strcmp(v, "21:9")) RW.w = 2560, RW.h = 1080;
+    else if (!strcmp(v, "32:9")) RW.w = 3072, RW.h = 864;
+    else return;
+    // Handheld, the update caps by the 1920x1080 entry whatever the class: the output would stay 16:9 under widened
+    // cameras.
+    if (!strcmp(cfg_value("TOTK_OPERATION_MODE"), "handheld")) {
+        rt_log("raiders wide: off in handheld mode (TOTK_OPERATION_MODE=handheld)");
+        return;
+    }
+    RW.aspect = (float)RW.w / (float)RW.h;
+    RW.on = 1;
+}
+
+int raiders_wide_class(void) {
+    raiders_wide_decide();
+    return RW.on ? 1 : -1;
+}
+
+void raiders_wide_init(void) {
+    raiders_wide_decide();
+    if (!RW.on) return;
+    uint32_t *e = (uint32_t *)(uintptr_t)RAIDERS_RES_TABLE;
+    if (e[10] != 2560 || e[11] != 1440 || e[12] != 3840 || e[13] != 2160) {
+        rt_log("raiders wide: the resolution table at main+%#llx is not the one of update 65536 (%ux%u, %ux%u); "
+               "ultrawide stays off", (unsigned long long)(RAIDERS_RES_TABLE - 0x7000000000ull), e[10], e[11], e[12],
+               e[13]);
+        RW.on = 0;
+        return;
+    }
+    uint64_t page = RAIDERS_RES_TABLE & ~0xfffull;
+    if (!plat_mem_protect(page, 0x2000, PLAT_PROT_RW)) rt_fatal("raiders wide: cannot unseal the resolution table");
+    e[10] = RW.w, e[11] = RW.h;
+    if (!plat_mem_protect(page, 0x2000, PLAT_PROT_READ)) rt_fatal("raiders wide: cannot seal the resolution table");
+    g_fnprof = 1;
+    rt_log("raiders wide: output %ux%u (class 1), camera aspect %.4f for projections at 16:9", RW.w, RW.h, RW.aspect);
+}
+
+void raiders_wide_projection(uint64_t proj) {
+    uint32_t bits = LD32(proj + 0xb0);
+    float a;
+    memcpy(&a, &bits, 4);
+    if (a > 1.7689f && a < 1.7867f) {   // 16:9 within half a percent
+        memcpy(&bits, &RW.aspect, 4);
+        ST32(proj + 0xb0, bits);
+    }
 }

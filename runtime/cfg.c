@@ -40,7 +40,7 @@ static const char *const known[] = {
     "FLIGHT_THUMBS", "FMZ", "FMZ_SEL", "FOV", "FOV_PATCH", "FPS60", "FPS_LIMIT", "FRAME_GEN", "FREEZE_IDLE", "FREE_CORES", "FULLSCREEN", "GPL", "GPL_DRAW_BUILD", "GPU",
     "GPU_INDEX", "GPU_NAME", "HDR", "HDR_GAME_NITS", "HDR_NATIVE", "HDR_PEAK_NITS", "HDR_SHOULDER", "HDR_TRACE", "HDR_UI_NITS", "HIGHFPS_FIX", "HOST_PROPS_CACHE", "INPUT", "INPUT_RECORD", "INPUT_SCRIPT", "LANG", "LIB_PREBUILD",
     "LIB_PREBUILD_KEEP", "LIB_PREBUILD_THREADS", "LIST_RESTART", "LOCALE", "LOD_GUARD", "MEMORY", "MEM_REPORT", "MENU_LANG", "MENU_THEME", "MENU_TEST",
-    "MENU_TEST_DIR", "MENU_TEST_SET", "MINIMAL_LAYOUT", "MIRROR_GAP", "MOTION", "MOUSE_CAMERA", "MOUSE_SENS", "MOVIE_HOST", "MOVIE_PACE", "MVK_UPSCALE_BLIT", "NAN_GUARD", "RAIDERS_RES", "RAIDERS_SKIP_880", "NATIVE_GS", "NX2_READ_NOWAIT",
+    "MENU_TEST_DIR", "MENU_TEST_SET", "MINIMAL_LAYOUT", "MIRROR_GAP", "MOTION", "MOUSE_CAMERA", "MOUSE_SENS", "MOVIE_HOST", "MOVIE_PACE", "MVK_UPSCALE_BLIT", "NAN_GUARD", "RAIDERS_RES", "RAIDERS_SKIP_880", "RAIDERS_WIDE", "NATIVE_GS", "NX2_READ_NOWAIT",
     "NVN2_MODE_TRACE", "NVN2_MODE_TRACE_START_MS", "NVN2_MODE_TRACE_DURATION_MS", "ONE_PER_CORE", "OPERATION_MODE", "OUTPUT_RES", "PAD_LAYOUT", "PATCH_OUTPUT", "PATCH_SCENE", "PERF_OVERLAY", "PERF_SLOW_GPU_MS", "PERF_SLOW_MS", "PIPELINE_CACHE", "PIPE_MEMO", "PIPE_PREBUILD", "PIPE_SKIP", "PIPE_SYNC", "PIPE_WAIT", "POOL_FINI_WAIT", "POOL_LAZY",
     "PRESENT_HOLD", "PREWARM_XLATE", "PROBE_MOVIE", "PROBE_MOVIE_SHOT", "PROFILE", "PROFILE_CHAINS", "PROFILE_DIR", "PROFILE_FRAMES",
     "PROFILE_MAIN", "PROFILE_RENDER", "PROFILE_REPLAY", "PUSH_SKIP", "PUSH_STAGE", "RDOC", "RDOC_DIR", "RDOC_DLL", "REALTIME", "REC_BEGIN", "REC_END", "REEXEC",
@@ -58,7 +58,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"FPS_LIMIT", "frame rate"}, {"FPS60", "frame rate"},
     {"REALTIME", "frame rate"}, {"CLOTH_REALTIME", "frame rate"}, {"HIGHFPS_FIX", "frame rate"},
     {"FULLSCREEN", "display"}, {"WINDOW_MODE", "display"}, {"WINDOW_SIZE", "display"}, {"PERF_OVERLAY", "display"}, {"VK_PRESENT", "display"},
-    {"GPU_INDEX", "display"}, {"OUTPUT_RES", "display"}, {"RENDER_SCALE", "display"}, {"RAIDERS_RES", "display"}, {"UPSCALER", "display"},
+    {"GPU_INDEX", "display"}, {"OUTPUT_RES", "display"}, {"RENDER_SCALE", "display"}, {"RAIDERS_RES", "display"}, {"RAIDERS_WIDE", "display"}, {"UPSCALER", "display"},
     {"ULTRAWIDE", "display"}, {"HUD_POSITION", "display"},
     {"SHARPNESS", "display"}, {"SMAA", "display"}, {"FRAME_GEN", "display"}, {"ASPECT", "display"}, {"FOV", "display"}, {"COLOR_PRESET", "display"},
     {"COLOR_BRIGHTNESS", "display"}, {"COLOR_CONTRAST", "display"}, {"COLOR_SATURATION", "display"},
@@ -104,7 +104,7 @@ static const CfgMeta metas[] = {
     {"VK_PRESENT", "mailbox", "mailbox|fifo|immediate", LIVE}, {"GPU_INDEX", "", NULL, RESTART},
     {"PERF_OVERLAY", "off", "off|fps|full", LIVE},
     {"OUTPUT_RES", "1920x1080", NULL, RESTART}, {"RENDER_SCALE", "game", "game|50|59|67|75|77|100|125|150|200", RESTART},
-    {"RAIDERS_RES", "1080p", "1080p|1440p|2160p", RESTART},   // ov_system.c ov_graphics_scale
+    {"RAIDERS_RES", "1080p", "1080p|1440p|2160p", RESTART}, {"RAIDERS_WIDE", "off", "off|21:9|32:9", RESTART},   // ov_system.c ov_graphics_scale
     {"UPSCALER", "fsr", "fsr|bilinear|dlss", LIVE}, {"SHARPNESS", "80", "0..100", LIVE}, {"SMAA", "off", "off|low|medium|high", LIVE},
     {"FRAME_GEN", "off", "off|2x", LIVE},   // vk_framegen.c, experimental
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
