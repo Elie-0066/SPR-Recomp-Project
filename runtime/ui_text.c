@@ -1,6 +1,6 @@
 // Catalog of the text the host shows the player (ui_text.h). One array per catalog language, indexed by UiTextId: a new
 // string gets an id in ui_text.h and an entry in every language that has one (a missing entry falls back to English).
-// The software keyboard has every language; the menu has English and Russian.
+// The software keyboard has every language; the menu has English, Russian and Korean.
 #include <stdatomic.h>
 #include <string.h>
 
@@ -668,6 +668,315 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_OV_SCALE_BILINEAR] = "билинейное",
 };
 
+static const char *const text_ko[UI_TEXT_COUNT] = {
+    SWKBD("문자 입력", "이름을 입력하세요", "말", "확인", "취소", "컨트롤러: A 확인, B 취소"),
+
+    [UI_MENU_TITLE] = "설정",
+    [UI_MENU_TAB_SCREEN] = "화면", [UI_MENU_TAB_GAME] = "게임", [UI_MENU_TAB_SOUND] = "사운드",
+    [UI_MENU_TAB_CONTROLS] = "조작", [UI_MENU_TAB_MENU] = "메뉴", [UI_MENU_TAB_ADVANCED] = "고급",
+    [UI_MENU_CONTINUE] = "계속하기", [UI_MENU_QUIT] = "게임 종료",
+    [UI_MENU_ON] = "켜기", [UI_MENU_OFF] = "끄기", [UI_MENU_AUTO] = "자동", [UI_MENU_DEFAULT_MARK] = "기본값",
+    [UI_MENU_AFTER_RESTART] = "재시작 후 적용", [UI_MENU_SET_BY_ENV] = "환경 변수로 설정됨",
+    [UI_MENU_SAVE_FAILED] = "설정을 저장하지 못했습니다",
+    [UI_MENU_VERSION] = "DKB Recomp %s, 게임 %s",
+
+    [UI_MENU_FULLSCREEN] = "전체 화면", [UI_MENU_FULLSCREEN_DESC] = "게임을 화면 가득 표시합니다. F11로 전환합니다.",
+    [UI_MENU_WINDOW_MODE] = "창 모드",
+    [UI_MENU_WINDOW_MODE_DESC] = "창 모드, 테두리 없는 창, 또는 전체 화면입니다. F11은 창 모드와 마지막 전체 화면 모드 사이를 전환합니다.",
+    [UI_MENU_WINDOW_MODE_WINDOWED] = "창 모드", [UI_MENU_WINDOW_MODE_BORDERLESS] = "테두리 없음",
+    [UI_MENU_WINDOW_MODE_FULLSCREEN] = "전체 화면",
+    [UI_MENU_WINDOW_SIZE] = "창 크기", [UI_MENU_WINDOW_SIZE_DESC] = "전체 화면이 아닐 때 게임 창의 크기입니다.",
+    [UI_MENU_WINDOW_SIZE_CUSTOM] = "사용자 지정",
+    [UI_MENU_WINDOWED_ONLY] = "창 모드에서만 사용할 수 있습니다",
+    [UI_MENU_PRESENT] = "화면 출력 방식", [UI_MENU_PRESENT_DESC] = "완성된 프레임이 화면에 표시되는 방식입니다.",
+    [UI_MENU_PRESENT_MAILBOX] = "메일박스", [UI_MENU_PRESENT_VSYNC] = "수직 동기화", [UI_MENU_PRESENT_IMMEDIATE] = "즉시",
+    [UI_MENU_PRESENT_IN_USE] = "사용 중: %s",
+    [UI_MENU_GPU] = "그래픽 카드", [UI_MENU_GPU_DESC] = "게임을 그리는 Vulkan 장치입니다.",
+    [UI_MENU_GPU_AUTO] = "자동",
+    [UI_MENU_PERF_OVERLAY] = "성능 오버레이",
+    [UI_MENU_PERF_OVERLAY_DESC] = "오른쪽 위에 프레임 레이트를 표시합니다. 전체는 그래프와 함께 프레임 시간, CPU, GPU, "
+                                  "메모리 부하, 온도, 렌더 스레드 대기 시간을 추가로 표시합니다. F10으로 모드를 순환합니다.",
+    [UI_MENU_PERF_OFF] = "끄기", [UI_MENU_PERF_FPS] = "FPS", [UI_MENU_PERF_FULL] = "전체",
+    [UI_PERF_LINE_FPS] = "%.0f fps",
+    [UI_MENU_GRAPHICS] = "화질",
+    [UI_MENU_OUTPUT_RES] = "렌더링 해상도",
+    [UI_MENU_ULTRAWIDE] = "울트라와이드",
+    [UI_MENU_ULTRAWIDE_DESC] = "21:9 또는 32:9 화면에 맞게 카메라의 가로 시야를 넓힙니다. 메뉴는 비율을 유지합니다. "
+                              "끄면 16:9 시야를 사용합니다. 변경하면 높이가 가장 가까운 해상도가 선택됩니다. 재시작해야 적용됩니다.",
+    [UI_MENU_WIDE_RES] = "렌더링 해상도",
+    [UI_MENU_WIDE_RES_DESC] = "게임이 창이나 화면에 맞게 확대/축소하기 전에 렌더링하는 해상도입니다. "
+                             "해상도가 높을수록 디테일이 좋아지지만 GPU 시간과 비디오 메모리를 더 사용합니다. "
+                             "울트라와이드를 켜면 21:9와 32:9를 선택할 수 있습니다. 재시작해야 적용됩니다.",
+    [UI_MENU_HUD_POSITION] = "HUD 위치",
+    [UI_MENU_HUD_POSITION_DESC] = "모서리 표시를 화면 가장자리에 두거나, 가운데 16:9 영역 안에 둡니다. "
+                                 "메뉴와 조준 표시는 가운데에 유지됩니다. 재시작해야 적용됩니다.",
+    [UI_MENU_HUD_EDGES] = "화면 가장자리", [UI_MENU_HUD_CENTERED] = "가운데 (16:9)",
+    [UI_MENU_WIDE_DISABLED] = "먼저 울트라와이드를 켜세요",
+    [UI_MENU_OUTPUT_RES_DESC] = "게임이 화면과 인터페이스를 그리는 크기입니다. 1920 x 1080보다 크면 비디오 메모리와 "
+                                "GPU 시간이 더 필요합니다. 더 넓은 크기(21:9)는 카메라 시야를 넓히고 HUD를 화면 모서리로 "
+                                "옮기며, 더 높은 크기(16:10, Steam Deck)는 HUD를 위아래 가장자리로 옮깁니다.",
+    [UI_MENU_RENDER_SCALE] = "3D 렌더링 배율",
+    [UI_MENU_RENDER_SCALE_DESC] = "게임 해상도 대비 3D 장면의 크기입니다. 게임의 FSR이 이를 해당 크기로 확대합니다. "
+                                  "100 %를 넘으면 계단 현상이 줄어들지만(슈퍼샘플링) GPU 부하가 큽니다.",
+    [UI_MENU_RENDER_SCALE_GAME] = "게임 기본 (83 %)",
+    [UI_MENU_RAIDERS_RES] = "해상도",
+    [UI_MENU_RAIDERS_RES_DESC] = "게임이 렌더링하는 출력으로, 해당 해상도의 TV에 연결된 Switch 2와 같습니다. TV 모드는 "
+                                 "1920 x 1080, 2560 x 1440 또는 3840 x 2160, 휴대 모드는 1080p에서 1280 x 720, 그 이상에서 "
+                                 "1920 x 1080입니다. 높을수록 비디오 메모리와 GPU 시간이 더 필요합니다.",
+    [UI_MENU_UPSCALER] = "창 크기에 맞춘 확대",
+    [UI_MENU_UPSCALER_DESC] = "창이 게임 해상도보다 클 때 화면을 확대하는 방식입니다. FSR은 바이리니어보다 가장자리와 "
+                              "디테일을 더 선명하게 유지합니다.",
+    [UI_MENU_UPSCALER_FSR] = "AMD FSR 1", [UI_MENU_UPSCALER_BILINEAR] = "바이리니어",
+    [UI_MENU_ASPECT] = "창에 화면 맞추기",
+    [UI_MENU_ASPECT_DESC] = "창의 비율이 게임 해상도와 다를 때(21:9 화면의 16:9 영상): 검은 여백으로 영상 비율을 "
+                            "유지하거나, 창 전체로 늘립니다. 카메라 시야는 넓어지지 않습니다.",
+    [UI_MENU_ASPECT_FIT] = "검은 여백", [UI_MENU_ASPECT_STRETCH] = "늘이기",
+    [UI_MENU_FOV] = "시야각",
+    [UI_MENU_FOV_DESC] = "카메라가 보여 주는 세계의 범위로, 게임 기본값에 대한 백분율입니다. 게임 버전 1.4.3 전용입니다.",
+    [UI_MENU_SHARPNESS] = "FSR 선명도",
+    [UI_MENU_SHARPNESS_DESC] = "FSR 확대 후의 선명화입니다. 0이면 꺼집니다.",
+    [UI_MENU_SMAA] = "안티앨리어싱 (SMAA)",
+    [UI_MENU_SMAA_DESC] = "창 크기에 맞춰 확대한 뒤, 이 메뉴를 그리기 전에 최종 화면의 계단 현상을 줄입니다. "
+                          "HUD에도 적용됩니다. 품질이 높을수록 GPU 시간이 더 듭니다.",
+    [UI_MENU_SMAA_LOW] = "낮음", [UI_MENU_SMAA_MEDIUM] = "중간", [UI_MENU_SMAA_HIGH] = "높음",
+    [UI_MENU_COLOR] = "색상",
+    [UI_MENU_COLOR_PRESET] = "색상 프로필",
+    [UI_MENU_COLOR_PRESET_DESC] = "아래 네 가지 값을 설정합니다. 선명함: 대비와 채도를 높이고 어두운 부분을 조금 밝힙니다"
+                                  "(OLED 화면용). 클래리티: 대비, 채도, 밝기를 조금 높입니다. 값을 움직이면 프로필이 "
+                                  "사용자 지정이 됩니다. HUD는 화면과 함께 바뀌지만 이 메뉴는 바뀌지 않습니다.",
+    [UI_MENU_COLOR_DEFAULT] = "게임 기본", [UI_MENU_COLOR_VIVID] = "선명함 (OLED)", [UI_MENU_COLOR_CLARITY] = "클래리티",
+    [UI_MENU_COLOR_CUSTOM] = "사용자 지정",
+    [UI_MENU_COLOR_BRIGHTNESS] = "밝기", [UI_MENU_COLOR_BRIGHTNESS_DESC] = "모든 색에 더해집니다. 0이면 그대로입니다.",
+    [UI_MENU_COLOR_CONTRAST] = "대비",
+    [UI_MENU_COLOR_CONTRAST_DESC] = "색을 중간 회색에서 멀어지게(100 % 초과) 또는 가까워지게 합니다. 100 %면 그대로입니다.",
+    [UI_MENU_COLOR_SATURATION] = "채도",
+    [UI_MENU_COLOR_SATURATION_DESC] = "회색 대비 색의 강도입니다. 100 %면 그대로입니다.",
+    [UI_MENU_COLOR_GAMMA] = "감마",
+    [UI_MENU_COLOR_GAMMA_DESC] = "1보다 작으면 어두운 톤과 중간 톤이 밝아지고, 1보다 크면 어두워집니다. 1이면 그대로입니다.",
+    [UI_MENU_HDR_GROUP] = "HDR (실험적)",
+    [UI_MENU_HDR] = "HDR 출력",
+    [UI_MENU_HDR_DESC] = "실험적: HDR 디스플레이에서 게임의 SDR 화면의 밝은 부분을 끌어올립니다. Windows에서 HDR(\"HDR 사용\")을 "
+                         "켜거나 색 관리를 지원하는 Wayland 컴포지터가 필요하며, 없으면 SDR로 유지됩니다. 재시작 후 적용됩니다.",
+    [UI_MENU_HDR_NATIVE] = "게임 자체 HDR",
+    [UI_MENU_HDR_NATIVE_DESC] = "HDR 출력이 켜져 있을 때: 끌어올린 SDR 화면 대신 콘솔처럼 게임이 자체 HDR 화면을 "
+                                "렌더링하며, 밝은 부분은 최대 밝기까지 표시됩니다(게임은 1400니트에서 멈춤). 이 모드에서는 "
+                                "FSR, SMAA, 색상 조정이 꺼집니다. 재시작 후 적용됩니다.",
+    [UI_MENU_HDR_PEAK] = "최대 밝기",
+    [UI_MENU_HDR_PEAK_DESC] = "디스플레이의 최대 밝기(니트)입니다. 가장 밝은 부분이 여기서 멈춥니다.",
+    [UI_MENU_HDR_GAME] = "게임 밝기",
+    [UI_MENU_HDR_GAME_DESC] = "화면 흰색(페이퍼 화이트)의 니트 값입니다. 203이 HDR 기준이며, 밝은 방에서는 높이세요.",
+    [UI_MENU_HDR_UI] = "메뉴 밝기",
+    [UI_MENU_HDR_UI_DESC] = "이 메뉴 흰색의 니트 값입니다. 게임의 HUD는 화면의 일부이므로 게임 밝기를 따릅니다.",
+
+    [UI_MENU_FPS_LIMIT] = "프레임 레이트 제한",
+    [UI_MENU_DKB_FPS_LIMIT_DESC] = "게임 속도를 실제 시간에 맞추기가 켜져 있으면 변경이 바로 적용됩니다. 60을 넘으려면 "
+                                 "그 실험적 설정과 충분한 CPU 및 GPU 성능이 필요합니다. 무제한은 실험적입니다.",
+    [UI_MENU_FPS_LIMIT_DESC] = "게임이 초당 그리는 최대 프레임 수입니다. 60 초과는 실험적이며 게임 속도를 실제 시간에 "
+                               "맞추기가 필요합니다. 무제한은 실험적입니다.",
+    [UI_MENU_FPS_30] = "30 FPS", [UI_MENU_FPS_40] = "40 FPS", [UI_MENU_FPS_45] = "45 FPS",
+    [UI_MENU_FPS_60] = "60 FPS", [UI_MENU_FPS_90] = "90 FPS", [UI_MENU_FPS_120] = "120 FPS", [UI_MENU_FPS_144] = "144 FPS",
+    [UI_MENU_FPS_DISPLAY] = "모니터 주사율", [UI_MENU_FPS_DISPLAY_HZ] = "모니터 주사율 (%.0f Hz)",
+    [UI_MENU_FPS_UNLIMITED] = "무제한",
+    [UI_MENU_FPS_NEEDS_REALTIME] = "게임 속도를 실제 시간에 맞추기 필요(재시작): 60 FPS 미만 및 초과 제한",
+    [UI_MENU_REALTIME] = "게임 속도를 실제 시간에 맞추기",
+    [UI_MENU_REALTIME_DESC] = "게임을 실제 시간 기준으로 진행하여, 느린 프레임이 게임을 느리게 만들지 않습니다.",
+    [UI_MENU_DKB_REALTIME_DESC] = "실험적이며 기본값은 꺼짐입니다. 측정한 프레임 시간에 맞춰 게임 타이밍을 조정합니다. "
+                                "카메라, 물리, 컷신, 오디오는 아직 검증이 필요합니다. 재시작해야 합니다.",
+    [UI_MENU_CLOTH_REALTIME] = "옷감도 실제 시간 기준",
+    [UI_MENU_CLOTH_REALTIME_DESC] = "옷감과 머리카락도 실제 시간 기준으로 진행합니다.",
+    [UI_MENU_HIGHFPS_FIX] = "고프레임 수정",
+    [UI_MENU_HIGHFPS_FIX_DESC] = "초당 30프레임을 넘을 때 이상하게 동작하는 물리와, 60을 넘을 때 투명하거나 보이지 않는 물체를 수정합니다.",
+    [UI_MENU_GAME_LANG] = "게임 언어", [UI_MENU_GAME_LANG_DESC] = "게임의 텍스트와 음성 언어입니다.",
+    [UI_MENU_GAME_LANG_AUTO] = "자동",
+    [UI_MENU_OPERATION_MODE] = "콘솔 모드",
+    [UI_MENU_OPERATION_MODE_DESC] = "게임이 TV 모드로 실행 중인지 휴대 모드로 실행 중인지를 정합니다.",
+    [UI_MENU_MODE_DOCKED] = "TV 모드", [UI_MENU_MODE_HANDHELD] = "휴대 모드",
+    [UI_MENU_ASSUME_FOCUS] = "포커스가 없어도 계속 실행",
+    [UI_MENU_ASSUME_FOCUS_DESC] = "켜면(기본값) 다른 창을 사용하는 동안에도 게임이 계속 실행되며, 창이 다시 앞으로 올 때까지 "
+                                  "키보드 입력은 무시됩니다. 끄면 Switch에서 HOME을 눌렀을 때처럼 창이 포커스를 잃으면 "
+                                  "일시 정지됩니다. 이렇게 중단된 로딩은 영영 멈출 수 있습니다.",
+
+    [UI_MENU_VOLUME] = "음량", [UI_MENU_VOLUME_DESC] = "게임의 전체 음량입니다.",
+    [UI_MENU_AUDIO_CHANNELS] = "스피커",
+    [UI_MENU_AUDIO_CHANNELS_DESC] = "스테레오 또는 5.1 서라운드 출력입니다. 자동은 기본 출력 장치가 6채널 이상이면 "
+                                    "5.1을 선택합니다. 재시작 후 적용됩니다.",
+    [UI_MENU_CHANNELS_AUTO] = "자동", [UI_MENU_CHANNELS_STEREO] = "스테레오", [UI_MENU_CHANNELS_51] = "5.1 서라운드",
+
+    [UI_MENU_MOTION] = "모션 컨트롤", [UI_MENU_MOTION_DESC] = "컨트롤러의 자이로 센서로 조준합니다.",
+    [UI_MENU_RUMBLE_STRENGTH] = "진동 세기",
+    [UI_MENU_RUMBLE_STRENGTH_DESC] = "컨트롤러가 진동하는 세기입니다.",
+    [UI_MENU_RUMBLE_CURVE] = "진동 곡선",
+    [UI_MENU_RUMBLE_CURVE_DESC] = "값이 낮을수록 약한 진동이 강해집니다.",
+    [UI_MENU_RUMBLE_TRIGGERS] = "트리거 진동 (Xbox)",
+    [UI_MENU_RUMBLE_TRIGGERS_DESC] = "Xbox 컨트롤러의 트리거도 진동시킵니다.",
+    [UI_MENU_PAD_LAYOUT] = "버튼 배치",
+    [UI_MENU_PAD_LAYOUT_DESC] = "어느 버튼이 A인지 정합니다. Nintendo: Switch처럼 오른쪽 버튼. Xbox: Xbox 컨트롤러 표기처럼 "
+                                "아래쪽 버튼(PlayStation 컨트롤러의 X). 자동은 Nintendo 표기 컨트롤러에는 Nintendo를, 그 밖에는 "
+                                "Xbox를 선택합니다. Xbox 표시: A는 Nintendo처럼 오른쪽 버튼이고, 게임이 Xbox 표기를 보여 줍니다"
+                                "(A 대신 B, B 대신 A, X 대신 Y, Y 대신 X). 표시는 재시작 후 바뀝니다. 글자는 게임 파일의 "
+                                "일부이므로 조작에서 다시 지정한 버튼은 화면에 이전 글자로 표시됩니다.",
+    [UI_MENU_PAD_LAYOUT_AUTO] = "자동", [UI_MENU_PAD_LAYOUT_NINTENDO] = "Nintendo (A 오른쪽)",
+    [UI_MENU_PAD_LAYOUT_XBOX] = "Xbox (A 아래쪽)", [UI_MENU_PAD_LAYOUT_XBOX_PROMPTS] = "Xbox 표시 (A 오른쪽)",
+    [UI_MENU_PAD_LAYOUT_IN_USE] = "사용 중: %s",
+    [UI_MENU_PAD_LAYOUT_PROMPTS_MISSING] = "버튼 표시 파일 없음: 설치를 다시 실행하세요",
+    [UI_MENU_PAD_LAYOUT_PROMPTS_RESTART] = "버튼 표시는 재시작 후 바뀝니다",
+    [UI_MENU_STICK_DEADZONE] = "스틱 데드존",
+    [UI_MENU_STICK_DEADZONE_DESC] = "게임이 인식하기 전까지 게임패드 스틱이 움직여야 하는 거리입니다. 캐릭터나 카메라가 저절로 움직이면 높이세요.",
+    [UI_MENU_MOUSE_CAMERA] = "마우스 직접 카메라",
+    [UI_MENU_MOUSE_CAMERA_DESC] = "컨트롤러식 가속이나 스무딩 없이 마우스 움직임으로 일반 추적 카메라를 직접 회전합니다. "
+                                "다른 카메라 모드는 컨트롤러식 마우스 입력을 사용합니다. 끄면 모든 곳에서 컨트롤러식 입력으로 돌아갑니다.",
+    [UI_MENU_MOUSE_SENS] = "마우스 카메라 감도",
+    [UI_MENU_MOUSE_SENS_DESC] = "마우스로 카메라를 돌리는 속도입니다.",
+
+    [UI_BINDS_HELP] = "칸을 선택하고 A 또는 Enter를 누른 뒤, 키나 마우스 버튼 또는 컨트롤러 버튼을 누르세요. Delete 또는 "
+                      "X로 칸을 비웁니다. 이미 사용 중인 키는 여기로 옮겨지고, 컨트롤러 버튼은 대체되는 버튼과 서로 바뀝니다.",
+    [UI_BINDS_COL_KEY1] = "키 1", [UI_BINDS_COL_KEY2] = "키 2", [UI_BINDS_COL_PAD] = "컨트롤러",
+    [UI_BINDS_GROUP_BUTTONS] = "버튼", [UI_BINDS_GROUP_MOVE] = "이동", [UI_BINDS_GROUP_CAMERA] = "카메라",
+    [UI_BINDS_PRESS_KEY] = "%s에 지정할 키나 마우스 버튼을 누르세요",
+    [UI_BINDS_PRESS_PAD] = "%s에 지정할 컨트롤러 버튼을 누르세요",
+    [UI_BINDS_CANCEL_HINT] = "Esc로 취소하거나 %d초 기다리세요",
+    [UI_BINDS_TAKEN] = "%s: %s에서 가져왔습니다", [UI_BINDS_SWAPPED] = "%s와(과) %s를 서로 바꿨습니다",
+    [UI_BINDS_RESET] = "모든 버튼 초기화",
+    [UI_BINDS_RESET_DESC] = "기본 키와 컨트롤러 버튼으로 되돌립니다. 위의 버튼 배치가 다시 적용됩니다. 다시 지정한 컨트롤러 버튼은 이 초기화 전까지 그대로 유지됩니다.",
+    [UI_BIND_A] = "A", [UI_BIND_B] = "B", [UI_BIND_X] = "X", [UI_BIND_Y] = "Y",
+    [UI_BIND_LCLICK] = "왼쪽 스틱 누르기", [UI_BIND_RCLICK] = "오른쪽 스틱 누르기", [UI_BIND_L] = "L",
+    [UI_BIND_R] = "R", [UI_BIND_ZL] = "ZL", [UI_BIND_ZR] = "ZR", [UI_BIND_PLUS] = "+", [UI_BIND_MINUS] = "-",
+    [UI_BIND_LEFT] = "방향 버튼 왼쪽", [UI_BIND_UP] = "방향 버튼 위", [UI_BIND_RIGHT] = "방향 버튼 오른쪽",
+    [UI_BIND_DOWN] = "방향 버튼 아래",
+    [UI_BIND_LSTICK_LEFT] = "왼쪽으로 이동", [UI_BIND_LSTICK_UP] = "앞으로 이동", [UI_BIND_LSTICK_RIGHT] = "오른쪽으로 이동",
+    [UI_BIND_LSTICK_DOWN] = "뒤로 이동",
+    [UI_BIND_RSTICK_LEFT] = "카메라 왼쪽", [UI_BIND_RSTICK_UP] = "카메라 위", [UI_BIND_RSTICK_RIGHT] = "카메라 오른쪽",
+    [UI_BIND_RSTICK_DOWN] = "카메라 아래",
+    [UI_BIND_DESC_A] = "상호작용, 줍기, 대화.", [UI_BIND_DESC_B] = "달리기, 취소, 뒤로.",
+    [UI_BIND_DESC_X] = "점프.", [UI_BIND_DESC_Y] = "공격.", [UI_BIND_DESC_LCLICK] = "웅크리기.",
+    [UI_BIND_DESC_RCLICK] = "1인칭 시점.", [UI_BIND_DESC_L] = "능력.",
+    [UI_BIND_DESC_R] = "무기 던지기.", [UI_BIND_DESC_ZL] = "방패, 주목.", [UI_BIND_DESC_ZR] = "활.",
+    [UI_BIND_DESC_PLUS] = "메뉴, 소지품.", [UI_BIND_DESC_MINUS] = "지도.",
+    [UI_BIND_DESC_DPAD] = "빠른 선택.",
+    [UI_BIND_DESC_MOVE] = "왼쪽 스틱처럼 캐릭터를 움직입니다. 컨트롤러의 왼쪽 스틱도 항상 작동합니다.",
+    [UI_BIND_DESC_CAMERA] = "오른쪽 스틱처럼 카메라를 돌립니다. 마우스와 컨트롤러의 오른쪽 스틱도 항상 작동합니다.",
+    [UI_KEY_SPACE] = "스페이스", [UI_KEY_TAB] = "Tab", [UI_KEY_LSHIFT] = "왼쪽 Shift", [UI_KEY_LCTRL] = "왼쪽 Ctrl",
+    [UI_KEY_UP] = "위쪽 화살표", [UI_KEY_DOWN] = "아래쪽 화살표", [UI_KEY_LEFT] = "왼쪽 화살표",
+    [UI_KEY_RIGHT] = "오른쪽 화살표",
+    [UI_KEY_MOUSE_L] = "마우스 왼쪽", [UI_KEY_MOUSE_R] = "마우스 오른쪽", [UI_KEY_MOUSE_M] = "마우스 가운데",
+    [UI_KEY_MOUSE_X1] = "마우스 4", [UI_KEY_MOUSE_X2] = "마우스 5",
+    [UI_KEY_ENTER] = "Enter", [UI_KEY_BACKSPACE] = "Backspace", [UI_KEY_RSHIFT] = "오른쪽 Shift",
+    [UI_KEY_RCTRL] = "오른쪽 Ctrl", [UI_KEY_LALT] = "Alt", [UI_KEY_CAPSLOCK] = "Caps Lock", [UI_KEY_INSERT] = "Insert",
+    [UI_KEY_DELETE] = "Delete", [UI_KEY_HOME] = "Home", [UI_KEY_END] = "End", [UI_KEY_PAGEUP] = "Page Up",
+    [UI_KEY_PAGEDOWN] = "Page Down", [UI_KEY_NUM_FMT] = "숫자패드 %s",
+    [UI_PAD_SOUTH] = "아래쪽 버튼", [UI_PAD_EAST] = "오른쪽 버튼", [UI_PAD_WEST] = "왼쪽 버튼",
+    [UI_PAD_NORTH] = "위쪽 버튼", [UI_PAD_LSTICK] = "왼쪽 스틱", [UI_PAD_RSTICK] = "오른쪽 스틱",
+    [UI_PAD_L] = "왼쪽 범퍼", [UI_PAD_R] = "오른쪽 범퍼", [UI_PAD_START] = "Start", [UI_PAD_BACK] = "Back",
+    [UI_PAD_DPAD_LEFT] = "방향 버튼 왼쪽", [UI_PAD_DPAD_UP] = "방향 버튼 위", [UI_PAD_DPAD_RIGHT] = "방향 버튼 오른쪽",
+    [UI_PAD_DPAD_DOWN] = "방향 버튼 아래", [UI_PAD_ZL] = "왼쪽 트리거", [UI_PAD_ZR] = "오른쪽 트리거",
+    [UI_PAD_LPADDLE1] = "왼쪽 뒷면 버튼", [UI_PAD_RPADDLE1] = "오른쪽 뒷면 버튼",
+    [UI_PAD_LPADDLE2] = "왼쪽 뒷면 버튼 2", [UI_PAD_RPADDLE2] = "오른쪽 뒷면 버튼 2",
+    [UI_PAD_CROSS] = "엑스", [UI_PAD_CIRCLE] = "동그라미", [UI_PAD_SQUARE] = "네모", [UI_PAD_TRIANGLE] = "세모",
+
+    [UI_MENU_MENU_LANG] = "메뉴 언어", [UI_MENU_MENU_LANG_DESC] = "이 메뉴와 오버레이의 언어입니다.",
+    [UI_MENU_MENU_LANG_AUTO] = "자동 (Windows 설정)",
+    [UI_MENU_THEME] = "메뉴 테마", [UI_MENU_THEME_DK] = "Donkey Kong", [UI_MENU_THEME_CLASSIC] = "클래식",
+    [UI_MENU_THEME_DESC] = "이 메뉴의 모양입니다: Donkey Kong(나무껍질과 바나나 노랑) 또는 클래식 짙은 초록과 금색.",
+
+    [UI_MENU_ADV_WARNING] = "이 설정은 테스트와 문제 해결용입니다. 이유를 알 때만 변경하세요.",
+    [UI_MENU_GROUP_SCHED] = "스케줄링", [UI_MENU_GROUP_SHADERS] = "셰이더와 파이프라인",
+    [UI_MENU_GROUP_TEXMEM] = "텍스처와 메모리", [UI_MENU_GROUP_FIXES] = "렌더링 수정",
+    [UI_MENU_GROUP_VULKAN] = "Vulkan", [UI_MENU_GROUP_DIAG] = "진단",
+    [UI_MENU_ASYNC_PREEMPT] = "가상 코어 선점",
+    [UI_MENU_ASYNC_PREEMPT_DESC] = "같은 가상 코어의 다른 게임 스레드를 중단시킬 수 있게 합니다.",
+    [UI_MENU_PREEMPT_OFF] = "끄기", [UI_MENU_PREEMPT_ON] = "켜기", [UI_MENU_PREEMPT_INHERIT] = "상속만",
+    [UI_MENU_REPLAY_ASYNC] = "GPU 프레임 준비를 별도 스레드에서",
+    [UI_MENU_REPLAY_ASYNC_DESC] = "게임 스레드 대신 별도 스레드에서 GPU용 프레임을 준비합니다. 최대 1프레임의 지연이 추가됩니다.",
+    [UI_MENU_TIMER_1MS] = "1 ms Windows 타이머",
+    [UI_MENU_TIMER_1MS_DESC] = "더 안정적인 프레임 간격을 위해 시스템 타이머 해상도를 1 ms로 높입니다.",
+    [UI_MENU_PIPE_WAIT] = "대기 중인 그리기 처리",
+    [UI_MENU_PIPE_WAIT_DESC] = "기본값은 대기 중인 그리기용 전용 작업자를 둔 현재 스케줄링을 유지합니다. 이전 방식(그리기)은 예전 스케줄링을 사용합니다.",
+    [UI_MENU_PIPE_WAIT_DEFAULT] = "기본값", [UI_MENU_PIPE_WAIT_DRAW] = "이전 방식 (그리기)",
+    [UI_MENU_PIPE_SKIP] = "파이프라인 빌드 중 건너뛸 그리기",
+    [UI_MENU_PIPE_SKIP_DESC] = "파이프라인을 기다리지 않고 버릴 그리기를 정합니다.",
+    [UI_MENU_PIPE_SKIP_STRICT] = "엄격", [UI_MENU_PIPE_SKIP_ANY] = "모두",
+    [UI_MENU_PIPE_SKIP_FULLSCREEN] = "전체 화면 패스",
+    [UI_MENU_LIB_PREBUILD] = "스테이지 라이브러리 사전 빌드",
+    [UI_MENU_LIB_PREBUILD_DESC] = "셰이더 스테이지 라이브러리를 백그라운드에서 미리 빌드합니다.",
+    [UI_MENU_LIB_PREBUILD_THREADS] = "스테이지 라이브러리 사전 빌드 스레드",
+    [UI_MENU_LIB_PREBUILD_THREADS_DESC] = "사전 빌드에 쓰는 스레드 수입니다. 자동은 CPU에 맞춰 정합니다.",
+    [UI_MENU_PIPE_PREBUILD] = "파이프라인 사전 빌드",
+    [UI_MENU_PIPE_PREBUILD_DESC] = "알려진 파이프라인을 미리 빌드합니다.",
+    [UI_MENU_PREWARM_XLATE] = "번역기 예열",
+    [UI_MENU_PREWARM_XLATE_DESC] = "시작할 때 알려진 셰이더를 번역하는 스레드입니다. 자동은 CPU 스레드의 절반(최대 16)을 사용합니다.",
+    [UI_MENU_GPL] = "그래픽 파이프라인 라이브러리",
+    [UI_MENU_GPL_DESC] = "Vulkan 파이프라인 라이브러리 확장을 사용합니다. 드라이버에 문제가 있으면 끄세요.",
+    [UI_MENU_ASTC] = "ASTC 텍스처 디코딩", [UI_MENU_ASTC_DESC] = "압축된 ASTC 텍스처를 디코딩하는 위치입니다.",
+    [UI_MENU_ASTC_AUTO] = "자동", [UI_MENU_ASTC_GPU] = "GPU 셰이더", [UI_MENU_ASTC_NATIVE] = "네이티브",
+    [UI_MENU_ASTC_CPU] = "CPU",
+    [UI_MENU_MEMORY] = "GPU 메모리 모드", [UI_MENU_MEMORY_DESC] = "게임 메모리를 GPU와 공유하는 방식입니다.",
+    [UI_MENU_MEMORY_AUTO] = "자동", [UI_MENU_MEMORY_IMPORT] = "가져오기", [UI_MENU_MEMORY_MIRROR] = "미러",
+    [UI_MENU_MEMORY_VERIFY] = "검증",
+    [UI_MENU_TEX_ALIAS] = "텍스처 별칭", [UI_MENU_TEX_ALIAS_DESC] = "사용 중인 텍스처의 메모리 위에 만든 새 텍스처가 비어 있지 않고 그 내용으로 시작합니다.",
+    [UI_MENU_TEX_VRAM_PRESSURE] = "텍스처 메모리 한도", [UI_MENU_TEX_VRAM_PRESSURE_DESC] = "게임이 해제한 텍스처를 버리기 시작하는 비디오 메모리 비율입니다(다시 사용할 때 저장소에서 복원됩니다). 0이면 유지합니다.",
+    [UI_MENU_ASTC_BC] = "ASTC를 BC3로 압축", [UI_MENU_ASTC_BC_DESC] = "GPU 디코더 사용 시: 디코딩한 ASTC 텍스처를 BC3로 다시 인코딩하여 비디오 메모리를 4분의 1로 줄입니다. 4 GB 이하 GPU용이며, 텍스처가 약간 뭉개져 보입니다.",
+    [UI_MENU_LOD_GUARD] = "LOD 보호", [UI_MENU_LOD_GUARD_DESC] = "GPU가 읽기 전에 게임이 세부 수준(LOD) 데이터를 다시 쓰는 것을 기다려, 물체가 한 프레임 동안 엉뚱한 곳에 번쩍이거나 먼 풍경이 평평해지는 것을 막습니다.",
+    [UI_MENU_FIX_C0] = "상수 버퍼 수정",
+    [UI_MENU_FIX_C0_DESC] = "0을 읽는 대신 드라이버 예약 상수 뱅크 c0(저장소 크기, 디스패치 크기, 점 크기, 기본 인스턴스)을 채웁니다.",
+    [UI_MENU_FIX_ZERO] = "새 GPU 메모리 0으로 채우기",
+    [UI_MENU_FIX_ZERO_DESC] = "Switch 메모리처럼 새 GPU 메모리 풀을 0으로 채운 상태로 시작합니다.",
+    [UI_MENU_LIST_RESTART] = "리스트의 프리미티브 재시작",
+    [UI_MENU_LIST_RESTART_DESC] = "Switch처럼 삼각형 리스트 그리기에도 게임의 프리미티브 재시작을 적용합니다. 없으면 재시작 인덱스가 정점으로 그려져, 예를 들어 지도에 길게 늘어난 삼각형이 생깁니다. primitiveTopologyListRestart를 지원하는 GPU가 필요합니다.",
+    [UI_MENU_BIND_SKIP] = "반복 바인딩 건너뛰기",
+    [UI_MENU_BIND_SKIP_DESC] = "최적화: 바뀌지 않은 바인딩을 건너뜁니다.",
+    [UI_MENU_SHADER_MEMO] = "셰이더 메모", [UI_MENU_SHADER_MEMO_DESC] = "최적화: 셰이더 조회 결과를 기억합니다.",
+    [UI_MENU_PIPE_MEMO] = "파이프라인 메모", [UI_MENU_PIPE_MEMO_DESC] = "최적화: 상태가 반복되면 이전 그리기의 파이프라인을 재사용합니다.",
+    [UI_MENU_TEX_MEMO] = "텍스처 바인딩 메모", [UI_MENU_TEX_MEMO_DESC] = "최적화: 그리기 사이에 텍스처 디스크립터를 기억합니다.",
+    [UI_MENU_DESC_TEMPLATE] = "디스크립터 템플릿",
+    [UI_MENU_DESC_TEMPLATE_DESC] = "최적화: 디스크립터를 한꺼번에 업데이트합니다.",
+    [UI_MENU_PUSH_SKIP] = "반복 푸시 상수 건너뛰기",
+    [UI_MENU_PUSH_SKIP_DESC] = "최적화: 바뀌지 않은 푸시 상수를 건너뜁니다.",
+    [UI_MENU_SPLIT_DRAWS] = "GPU 조기 제출",
+    [UI_MENU_SPLIT_DRAWS_DESC] = "패스 사이에서 N번의 그리기마다 GPU 작업을 나누어 제출해 GPU가 더 일찍 시작하게 합니다. 0이면 꺼집니다.",
+    [UI_MENU_VK_VALIDATION] = "검증 레이어",
+    [UI_MENU_VK_VALIDATION_DESC] = "모든 Vulkan 호출을 검사하며 게임이 크게 느려집니다.",
+    [UI_MENU_VK_VALIDATION_MISSING] = "검증 레이어가 설치되어 있지 않습니다.",
+    [UI_MENU_VK_DYN_VERTEX] = "동적 정점 상태",
+    [UI_MENU_VK_DYN_VERTEX_DESC] = "동적 정점 입력을 강제로 켜거나 끕니다. 기본값은 GPU에 따라 다릅니다.",
+    [UI_MENU_VK_DYN_A2C] = "동적 알파 투 커버리지",
+    [UI_MENU_VK_DYN_A2C_DESC] = "동적 알파 투 커버리지를 강제로 켜거나 끕니다. 기본값: RDNA 2 이하용 AMD 드라이버에서는 "
+                                "캐릭터가 검게 그려지므로 꺼짐, 그 밖에서는 켜짐.",
+    [UI_MENU_VK_SUBGROUP_PIN] = "서브그룹 크기 고정", [UI_MENU_VK_SUBGROUP_PIN_DESC] = "셰이더 서브그룹 크기를 고정합니다.",
+    [UI_MENU_TRACE] = "성능 로그", [UI_MENU_TRACE_DESC] = "프레임 시간을 파일에 기록합니다.",
+    [UI_MENU_FLIGHT] = "플라이트 레코더",
+    [UI_MENU_FLIGHT_DESC] = "짧은 기록을 보관하다가 프레임이 멈추면 저장합니다.",
+    [UI_MENU_FLIGHT_SPIKE_MS] = "멈춤 기준 (ms)",
+    [UI_MENU_FLIGHT_SPIKE_MS_DESC] = "멈춤으로 간주하는 프레임 시간입니다.",
+    [UI_MENU_INPUT_RECORD] = "입력 기록",
+    [UI_MENU_INPUT_RECORD_DESC] = "버그 보고를 위해 입력을 파일에 기록합니다.",
+    [UI_MENU_OPEN_LOG] = "로그 폴더 열기", [UI_MENU_OPEN_LOG_DESC] = "로그 파일이 있는 폴더를 표시합니다.",
+    [UI_MENU_COPY_INFO] = "시스템 정보 복사",
+    [UI_MENU_COPY_INFO_DESC] = "GPU, 드라이버, CPU, RAM 및 변경한 설정을 클립보드에 복사합니다.",
+    [UI_MENU_COPY_INFO_DONE] = "복사됨", [UI_MENU_ACTION_FAILED] = "실패했습니다",
+    [UI_MENU_RESET] = "모든 설정을 기본값으로 초기화", [UI_MENU_RESET_DESC] = "모든 탭에 적용됩니다.",
+    [UI_MENU_RESET_CONFIRM] = "모든 설정을 기본값으로 초기화할까요?", [UI_MENU_RESET_YES] = "초기화",
+    [UI_MENU_RESET_NO] = "취소",
+
+    [UI_MENU_OV_FPS] = "%.0f FPS", [UI_MENU_OV_FRAME_MS] = "%.1f ms", [UI_MENU_OV_GAME_PCT] = "게임 %.0f%%",
+    [UI_MENU_OV_MAX_MS] = "최대 %.1f ms",
+    [UI_MENU_OV_GPU] = "GPU", [UI_MENU_OV_CPU] = "CPU", [UI_MENU_OV_RAM] = "RAM", [UI_MENU_OV_VRAM] = "VRAM",
+    [UI_MENU_OV_TEMP] = "온도", [UI_MENU_OV_POWER] = "전력", [UI_MENU_OV_CLOCK] = "클럭",
+    [UI_MENU_OV_NONE] = "-",
+    [UI_MENU_OV_REPLAY] = "GPU 프레임 준비", [UI_MENU_OV_GPU_TIME] = "프레임당 GPU 사용",
+    [UI_MENU_OV_PIPE_WAIT] = "파이프라인 대기",
+    [UI_MENU_OV_SHADER_WAIT] = "셰이더 대기", [UI_MENU_OV_TEX_UPLOADS] = "텍스처 업로드",
+    [UI_MENU_OV_FMT_PCT] = "%.0f%%", [UI_MENU_OV_FMT_TEMP] = "%.0f °C", [UI_MENU_OV_FMT_POWER] = "%.0f W",
+    [UI_MENU_OV_FMT_MHZ] = "%.0f MHz", [UI_MENU_OV_FMT_GB] = "%.1f GB", [UI_MENU_OV_FMT_GB_OF] = "/ %.1f GB",
+    [UI_MENU_OV_GAME_GB] = "게임 %.1f GB", [UI_MENU_OV_FMT_MS] = "%.2f ms", [UI_MENU_OV_PER_FRAME] = "프레임당 %.1f",
+    [UI_MENU_OV_WINDOW] = "창", [UI_MENU_OV_OUTPUT] = "게임 영상", [UI_MENU_OV_SCENE] = "3D 장면",
+    [UI_MENU_OV_SCALING] = "확대/축소", [UI_MENU_OV_LIMIT] = "프레임 제한", [UI_MENU_OV_PRESENT] = "화면 출력",
+    [UI_MENU_OV_FMT_SIZE] = "%ux%u", [UI_MENU_OV_FMT_SCENE] = "%ux%u, %.0f%%",
+    [UI_MENU_OV_FMT_UPSCALE] = "%ux%u -> %ux%u",
+    [UI_MENU_OV_NO_UPSCALER] = "업스케일러 없음",
+    [UI_MENU_OV_FMT_FSR] = "AMD FSR 1, 선명도 %d%%", [UI_MENU_OV_SCALE_NONE] = "없음 (1:1)",
+    [UI_MENU_OV_SCALE_BILINEAR] = "바이리니어",
+};
+
 #define SWKBD_ONLY(name, ...) static const char *const name[UI_TEXT_COUNT] = {SWKBD(__VA_ARGS__)}
 SWKBD_ONLY(text_ja, "文字入力", "名前を入力してください", "ウマ", "OK", "キャンセル", "コントローラー: A = OK、B = キャンセル");
 SWKBD_ONLY(text_fr, "Saisie de texte", "Entrez un nom", "Cheval", "OK", "Annuler", "Manette : A = OK, B = Annuler");
@@ -679,7 +988,6 @@ SWKBD_ONLY(text_nl, "Tekstinvoer", "Voer een naam in", "Paard", "OK", "Annuleren
 SWKBD_ONLY(text_pt, "Inserir texto", "Introduz um nome", "Cavalo", "OK", "Cancelar", "Comando: A = OK, B = Cancelar");
 SWKBD_ONLY(text_zh_hans, "文字输入", "请输入名字", "马儿", "确定", "取消", "手柄：A 确定，B 取消");
 SWKBD_ONLY(text_zh_hant, "文字輸入", "請輸入名字", "馬兒", "確定", "取消", "手把：A 確定，B 取消");
-SWKBD_ONLY(text_ko, "문자 입력", "이름을 입력하세요", "말", "확인", "취소", "컨트롤러: A 확인, B 취소");
 
 static const Row rows[] = {
     {"en", text_en}, {"ja", text_ja}, {"fr", text_fr}, {"de", text_de}, {"it", text_it}, {"es", text_es},
@@ -715,14 +1023,22 @@ const char *ui_text_in(const char *lang, UiTextId id) {
 
 const char *ui_text(UiTextId id) { return ui_text_in(ui_text_lang(ov_language()), id); }
 
-// The menu language, re-read when cfg_version changes. TOTK_MENU_LANG "ru" or "en"; anything else (unset included)
-// follows the system UI language: Russian for "ru", "ru-RU", ..., else English.
+// The menu languages: those with a whole menu catalog above.
+static const char *const menu_langs[] = {"en", "ru", "ko"};
+
+// The menu language, re-read when cfg_version changes. TOTK_MENU_LANG "en", "ru" or "ko"; anything else (unset
+// included) follows the system UI language: Russian for "ru", "ru-RU", ..., Korean for "ko", "ko-KR", ..., else English.
 static const char *resolve_menu_lang(void) {
+    enum { N = sizeof menu_langs / sizeof *menu_langs };
     const char *v = cfg_value("TOTK_MENU_LANG");
-    if (v && !strcmp(v, "ru")) return "ru";
-    if (v && !strcmp(v, "en")) return "en";
+    for (size_t i = 0; i < N; i++)
+        if (v && !strcmp(v, menu_langs[i])) return menu_langs[i];
     const char *sys = plat_ui_language();
-    return sys && (!strcmp(sys, "ru") || !strncmp(sys, "ru-", 3)) ? "ru" : "en";
+    for (size_t i = 0; sys && i < N; i++) {
+        size_t n = strlen(menu_langs[i]);
+        if (!strncmp(sys, menu_langs[i], n) && (!sys[n] || sys[n] == '-')) return menu_langs[i];
+    }
+    return "en";
 }
 
 const char *menu_text(UiTextId id) {

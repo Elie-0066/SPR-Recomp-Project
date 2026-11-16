@@ -344,6 +344,8 @@ static int vk_up(const MenuTarget *t) {
 
 // Roboto Medium (Latin, Cyrillic, dashes and quotes) at 26 px per 1080 lines, with the glyphs of the Japanese, Korean
 // and Chinese language names merged in from a system font when there is one (each language is named in its own script).
+// The Korean font also gives every glyph of the Korean menu catalog, so the menu can be shown in Korean; only the
+// syllables the catalog uses go into the atlas (about 600 of Hangul's 11,172).
 // Made again when the window height changes; the old texture goes after the queue is idle (CreateFontsTexture).
 static const ImWchar kRanges[] = {0x0020, 0x00FF, 0x0400, 0x052F, 0x2010, 0x2027, 0};
 static const struct { const char *lang; UiTextId name; } kCjk[] = {
@@ -412,6 +414,9 @@ static int fonts_up(float scale) {
         merged++;
         ImFontGlyphRangesBuilder b;
         b.AddText(ui_text_in("en", kCjk[i].name));
+        if (!strcmp(kCjk[i].lang, "ko"))
+            for (int id = UI_MENU_FIRST; id <= UI_MENU_LAST_ID; id++)
+                if (ui_text_defined("ko", (UiTextId)id)) b.AddText(ui_text_in("ko", (UiTextId)id));
         b.BuildRanges(&ranges[i]);
         ImFontConfig mc;
         mc.MergeMode = true;
@@ -841,8 +846,9 @@ static void tab_controls(float scale) {
 
 static void tab_menu(float scale) {
     opt_begin("##menu", scale);
-    static const UiTextId langs[] = {UI_MENU_MENU_LANG_AUTO, UI_MENU_LANGNAME_EN, UI_MENU_LANGNAME_RU};
-    opt_choice("TOTK_MENU_LANG", UI_MENU_MENU_LANG, langs, 3, UI_MENU_MENU_LANG_DESC);
+    static const UiTextId langs[] = {UI_MENU_MENU_LANG_AUTO, UI_MENU_LANGNAME_EN, UI_MENU_LANGNAME_RU,
+                                     UI_MENU_LANGNAME_KO};
+    opt_choice("TOTK_MENU_LANG", UI_MENU_MENU_LANG, langs, 4, UI_MENU_MENU_LANG_DESC);
     static const UiTextId themes[] = {UI_MENU_THEME_DK, UI_MENU_THEME_CLASSIC};
     if (!raiders()) opt_choice("TOTK_MENU_THEME", UI_MENU_THEME, themes, 2, UI_MENU_THEME_DESC);
     opt_end();
