@@ -42,7 +42,7 @@
             "format": "ini",
             "file": [
                 {
-                    "path": "{install}/game/totk.ini"
+                    "path": "{install}/game/dkb.ini"
                 }
             ]
         }
