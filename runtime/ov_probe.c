@@ -25,6 +25,7 @@
 
 #define CHILD_ENV "TOTK_PROBE_SERVICES_CHILD"
 #define TRY_WAIT_SYSTEM_EVENT "_ZN2nn2os18TryWaitSystemEventEPNS0_15SystemEventTypeE"
+#define DESTROY_SYSTEM_EVENT "_ZN2nn2os18DestroySystemEventEPNS0_15SystemEventTypeE"
 
 typedef struct { const char *key, *name; int fatal; uint64_t addr; int bound, calls; } Ov;
 static Ov ovs[] = {
@@ -363,6 +364,17 @@ static void probe_applet(void) {
     CHECK(CALL("nfp.AttachAvailabilityChangeEvent", ev) == 0, "AttachAvailabilityChangeEvent");
     int nfp_event = event_works(ev, 0);
     CHECK(nfp_event, "the nfp availability event does not work as a manual-clear system event");
+    // Splatoon Raiders destroys this event at the end of a stage and attaches the same SystemEventType again when the
+    // next one loads: the second attach must create it again, or the next DestroySystemEvent finds it uninitialised
+    // and the SDK aborts (kernel.c, kern_bind_system_event).
+    uint64_t destroy = ldr_symbol(DESTROY_SYSTEM_EVENT);
+    if (!destroy) rt_fatal("probe-services: no %s", DESTROY_SYSTEM_EVENT);
+    rt_call(gc, destroy, 1, ev);
+    CHECK(CALL("nfp.AttachAvailabilityChangeEvent", ev) == 0, "AttachAvailabilityChangeEvent after a destroy");
+    int nfp_again = event_works(ev, 0);
+    CHECK(nfp_again, "the nfp availability event attached again after a destroy does not work");
+    rt_call(gc, destroy, 1, ev);
+    printf("nfp: availability event destroyed and attached again at the same address: %s\n", nfp_again ? "ok" : "FAILED");
     CHECK((uint32_t)CALL("nfp.GetDeviceState", U(handles)) == 0, "nfp device state");
     static const char *const none[] = {"nfp.Mount", "nfp.GetNpadId", "nfp.AttachActivateEvent", "nfp.AttachDeactivateEvent",
                                        "nfp.StartDetection", "nfp.StopDetection", "nfp.GetTagInfo", "nfp.GetModelInfo"};

@@ -2145,8 +2145,36 @@ static uint32_t se_find(uint64_t ev) {
     return wh;
 }
 
+// nn::os::SystemEventType keeps its state in the byte at +0x28: 0 not initialised, 1 a process-local event, 2 an
+// inter-process event, the kind CreateSystemEvent makes. The SDK's DestroySystemEvent reads it there, sets it to 0 and
+// aborts on any value but 1 and 2.
+#define SE_STATE_OFFSET 0x28
+#define SE_STATE_INTER_PROCESS 2
+
+// Whether the guest event at ev is still the one this table bound: the game may destroy it and later hand the same
+// address to a service again (Splatoon Raiders' amiibo manager does at each stage change), and its handles are closed
+// by then.
+static int se_alive(uint64_t ev) {
+    return *(volatile uint8_t *)(uintptr_t)(ev + SE_STATE_OFFSET) == SE_STATE_INTER_PROCESS;
+}
+
+// Records the writable handle of ev, replacing the handle of an earlier binding the game has destroyed since.
+static void se_store(uint64_t ev, uint32_t wh) {
+    plat_mutex_lock(&g_se_lock);
+    int i = 0;
+    while (i < g_nse && g_se[i].ev != ev) i++;
+    if (i == g_nse) {
+        if (g_nse == (int)(sizeof g_se / sizeof *g_se)) rt_fatal("kern_bind_system_event: table full");
+        g_se[g_nse++].ev = ev;
+    }
+    g_se[i].wh = wh;
+    plat_mutex_unlock(&g_se_lock);
+}
+
+// Binds ev once while it lives: a second call for a live event keeps its handles, a call after the game destroyed it
+// creates it again, as the service would on the console.
 void kern_bind_system_event(Cpu *c, uint64_t ev, int autoclear) {
-    if (se_find(ev)) return;
+    if (se_find(ev) && se_alive(ev)) return;
     if (!tcur || !c) rt_fatal("kern_bind_system_event(%#llx) on a host thread", (unsigned long long)ev);
     static uint64_t create, getw;
     if (!create) {
@@ -2157,16 +2185,14 @@ void kern_bind_system_event(Cpu *c, uint64_t ev, int autoclear) {
     uint32_t r = (uint32_t)rt_call(c, create, 3, ev, (uint64_t)(autoclear ? 1 : 0), (uint64_t)1);
     if (r) rt_fatal("kern_bind_system_event: CreateSystemEvent(%#llx) failed %#x", (unsigned long long)ev, r);
     uint32_t wh = (uint32_t)rt_call(c, getw, 1, ev);
-    plat_mutex_lock(&g_se_lock);
-    if (g_nse == (int)(sizeof g_se / sizeof *g_se)) rt_fatal("kern_bind_system_event: table full");
-    g_se[g_nse].ev = ev;
-    g_se[g_nse++].wh = wh;
-    plat_mutex_unlock(&g_se_lock);
+    se_store(ev, wh);
 }
 
-// An event not bound yet is bound on the spot with manual clear, which needs a guest thread.
+// An event not bound yet is bound on the spot with manual clear, which needs a guest thread. One the game has
+// destroyed is not signalled: its handle is closed and its number may belong to another object by now.
 void kern_signal_system_event(uint64_t ev) {
     uint32_t wh = se_find(ev);
+    if (wh && !se_alive(ev)) return;
     if (!wh) {
         kern_bind_system_event(kern_cpu(), ev, 0);
         wh = se_find(ev);
