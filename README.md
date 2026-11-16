@@ -17,6 +17,8 @@ copy of the game, and the executable you build from it is for your own use only.
 
 **If you are playing on AMD GPUs please see [AMD graphics cards](#amd-graphics-cards).**
 
+Dont forget to follow me on twitter for updates on futures releases ! : https://x.com/Lyriiiie
+
 (This is also HEAVILY Vibecoded and experimental just so you know, if there is any problem let me know, also yes it was played and tested on a very cheap PC)
 
 ## Status
