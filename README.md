@@ -2,6 +2,8 @@
 
 <a href="https://recomplauncher.com/game/spr-recomp-project"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
 
+## **Dont forget to follow me on twitter for updates on futures releases ! : https://x.com/Lyriiiie**
+
 An unofficial static recompilation of *Splatoon Raiders* (Nintendo Switch 2) into a native Windows x86-64 executable
 with a Vulkan renderer. It is a **fork of [DKB Recomp](https://github.com/Lucas-blip-png/dkb-pc-recomp)**, retargeted
 from *Donkey Kong Bananza*; DKB Recomp is itself built on [TotK Recomp](https://github.com/valentderah/totk-pc-recomp).
@@ -16,8 +18,6 @@ Switch services and answers NVN 2 graphics calls through Vulkan.
 copy of the game, and the executable you build from it is for your own use only. Do not share builds.**
 
 **If you are playing on AMD GPUs please see [AMD graphics cards](#amd-graphics-cards).**
-
-Dont forget to follow me on twitter for updates on futures releases ! : https://x.com/Lyriiiie
 
 (This is also HEAVILY Vibecoded and experimental just so you know, if there is any problem let me know, also yes it was played and tested on a very cheap PC)
 
