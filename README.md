@@ -21,8 +21,6 @@ copy of the game, and the executable you build from it is for your own use only.
 
 (This is also HEAVILY Vibecoded and experimental just so you know, if there is any problem let me know, also yes it was played and tested on a very cheap PC)
 
-**Follow me on X (Twitter) for news about the project: [@Lyriiiie](https://x.com/Lyriiiie).**
-
 ## Status
 
 **[Download the latest release](https://github.com/Elie-0066/SPR-Recomp-Project/releases/latest)** (Windows setup, no game data). **Early, playable in parts.** The title, the opening cutscene, the character creator, the hub and the first gameplay
