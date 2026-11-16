@@ -1,5 +1,7 @@
 # SPR Recomp
 
+<a href="https://recomplauncher.com/game/spr-recomp-project"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 An unofficial static recompilation of *Splatoon Raiders* (Nintendo Switch 2) into a native Windows x86-64 executable
 with a Vulkan renderer. It is a **fork of [DKB Recomp](https://github.com/Lucas-blip-png/dkb-pc-recomp)**, retargeted
 from *Donkey Kong Bananza*; DKB Recomp is itself built on [TotK Recomp](https://github.com/valentderah/totk-pc-recomp).

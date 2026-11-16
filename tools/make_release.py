@@ -453,6 +453,7 @@ def build_sources(out):
     # licence texts travel with it.
     shutil.copy2(ROOT / 'LICENSE', out / 'LICENSE')
     shutil.copy2(ROOT / 'LICENSE-MIT', out / 'LICENSE-MIT')
+    shutil.copy2(ROOT / 'recomplauncher.json', out / 'recomplauncher.json')   # RecompLauncher reads it next to SPR-Setup.exe
     (out / 'VERSION').write_text(version() + '\n', encoding='utf-8')
 
 

@@ -1,0 +1,121 @@
+{
+    "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+    "format": 1,
+    "name": "SPR Recomp",
+    "repo": "Elie-0066/SPR-Recomp-Project",
+    "game": {
+        "kind": "iso",
+        "label": "Your dump of Splatoon Raiders update 65536, as a .nup file. Other versions build but are experimental."
+    },
+    "prepare": {
+        "program": [
+            "python/python.exe"
+        ],
+        "args": [
+            "-m",
+            "installer",
+            "--game",
+            "raiders",
+            "--nup",
+            "{game}",
+            "--dest",
+            "{install}/game",
+            "--no-update-check"
+        ],
+        "label": "Compiling the game on your PC (about 30 minutes)",
+        "timeout": 7200
+    },
+    "start": {
+        "program": [
+            "game/spr-recomp.exe"
+        ],
+        "args": [
+            "--boot"
+        ]
+    },
+    "saves": [
+        "{install}/game/profile"
+    ],
+    "config": [
+        {
+            "id": "main",
+            "format": "ini",
+            "file": [
+                {
+                    "path": "{install}/game/dkb.ini"
+                }
+            ]
+        }
+    ],
+    "folders": {
+        "logs": [
+            {
+                "path": "{install}/game/logs"
+            }
+        ]
+    },
+    "settings": [
+        {
+            "id": "window",
+            "label": "Window",
+            "help": "Windowed uses a normal window. Borderless fills the screen with the desktop's own mode. Fullscreen takes the display's mode.",
+            "choices": [
+                {
+                    "label": "Windowed",
+                    "set": {
+                        "window_mode": "windowed"
+                    }
+                },
+                {
+                    "label": "Borderless",
+                    "set": {
+                        "window_mode": "borderless"
+                    }
+                },
+                {
+                    "label": "Fullscreen",
+                    "set": {
+                        "window_mode": "fullscreen"
+                    }
+                }
+            ],
+            "defaults": {
+                "window_mode": "windowed"
+            }
+        },
+        {
+            "id": "pad_layout",
+            "label": "Button layout",
+            "help": "Which controller button is A. Automatic picks the layout for your pad.",
+            "choices": [
+                {
+                    "label": "Automatic",
+                    "set": {
+                        "pad_layout": "auto"
+                    }
+                },
+                {
+                    "label": "Nintendo layout",
+                    "set": {
+                        "pad_layout": "nintendo"
+                    }
+                },
+                {
+                    "label": "Xbox layout",
+                    "set": {
+                        "pad_layout": "xbox"
+                    }
+                }
+            ],
+            "defaults": {
+                "pad_layout": "auto"
+            }
+        }
+    ],
+    "requires": [
+        "start",
+        "setup",
+        "settings.ini",
+        "settings.choices"
+    ]
+}
