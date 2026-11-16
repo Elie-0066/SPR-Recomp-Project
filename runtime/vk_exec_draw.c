@@ -587,6 +587,27 @@ typedef struct ViewNode { struct ViewNode *next; ViewKey k; VkImageView view; } 
 static nvn_hmap view_of;                 // ViewKey -> VkImageView
 static nvn_hmap views_by_image;          // VkImage -> its first ViewNode
 
+// Names, once per shape, a texture the game made as a 2D array and samples through a cube view (Splatoon Raiders' sky
+// and probe cubemaps), and one whose cube view is refused because it was made without CUBE_COMPATIBLE (the shader then
+// reads a stand-in). vk_texture.c create_tex gives the flag to as few arrays as it can, because the flag changes how
+// AMD's Windows driver lays out an image; the log shows which shapes need it.
+static void cube_of_array_note(const VkTexImage *img, int refused) {
+    static struct { VkFormat f; uint32_t w, levels, layers; int refused; } seen[32];
+    static int n;
+    for (int i = 0; i < n; i++)
+        if (seen[i].f == img->format && seen[i].w == img->width && seen[i].levels == img->levels &&
+            seen[i].layers == img->layers && seen[i].refused == refused)
+            return;
+    if (n == (int)(sizeof seen / sizeof *seen)) return;
+    seen[n].f = img->format, seen[n].w = img->width, seen[n].levels = img->levels, seen[n].layers = img->layers;
+    seen[n].refused = refused;
+    n++;
+    int bc = img->format >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && img->format <= VK_FORMAT_BC7_SRGB_BLOCK;
+    rt_log("vk: cube view of a 2D-array texture%s: VkFormat %d, %ux%u, %u levels, %u layers%s",
+           refused ? " refused (no CUBE_COMPATIBLE)" : "", (int)img->format, img->width, img->height, img->levels,
+           img->layers, bc ? ", BC" : "");
+}
+
 // An image view of a registered texture for a shader resource of type `rtype` (GfxShaderRes.type); VK_NULL_HANDLE when
 // the image cannot serve it (the caller binds a stand-in). Texture lock held.
 static VkImageView get_view(VkExec *ex, const VkTexImage *img, const view_t *v, int hv, uint16_t rtype, int storage) {
@@ -608,6 +629,9 @@ static VkImageView get_view(VkExec *ex, const VkTexImage *img, const view_t *v, 
         break;
     default: ok = img->type == VK_IMAGE_TYPE_2D; break;
     }
+    if (cube && img->type == VK_IMAGE_TYPE_2D && img->view_type != VK_IMAGE_VIEW_TYPE_CUBE &&
+        img->view_type != VK_IMAGE_VIEW_TYPE_CUBE_ARRAY)
+        cube_of_array_note(img, !ok);
     if (!ok) return VK_NULL_HANDLE;
     uint32_t l0 = hv && v->set_levels ? v->base_level : 0;
     if (l0 >= img->levels) return VK_NULL_HANDLE;

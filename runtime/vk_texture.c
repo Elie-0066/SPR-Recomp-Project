@@ -421,13 +421,17 @@ static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
     // an image out, and terrain material arrays sampled through it came out in rainbow blocks that moved with the mip
     // level (Savage Wind Recomp issue #59, BotW on an RX 580 and a 7800 XT).
     // Splatoon Raiders makes its sky and probe cubemaps as 2D-array textures of 6 layers and samples them through
-    // cube descriptors: there the flag goes on square arrays whose layer count is a multiple of 6, or the cube view is
-    // refused and the shader reads a black stand-in (the cube conversion pass for its reflection probes came out black).
+    // cube descriptors: there the flag goes on square arrays of exactly 6 layers, or the cube view is refused and the
+    // shader reads a black stand-in (the cube conversion pass for its reflection probes came out black). Every cube view
+    // logged from the title to the first gameplay zone was of such an array (256x256, 9 levels: BC3, B10G11R11 and
+    // RGBA8; vk_exec_draw.c cube_of_array_note). Any multiple of 6 also flagged a 30-layer BC5 material array with 7
+    // levels that is never a cube: the shape mkw-recomp found AMD's Windows driver samples wrongly past mip 0 with the
+    // flag (its vk_tex_image.c create_tex, "Array shape alone does not imply cube views", RX 570).
     static int raiders = -1;
     if (raiders < 0) raiders = !strcmp(rt_game_target, "raiders");
     if (type == VK_IMAGE_TYPE_2D && layers >= 6 && w == h && samples == 1 &&
         (d->target == NVN_TEXTURE_TARGET_CUBEMAP || d->target == NVN_TEXTURE_TARGET_CUBEMAP_ARRAY ||
-         (raiders && d->target == NVN_TEXTURE_TARGET_2D_ARRAY && layers % 6 == 0)))
+         (raiders && d->target == NVN_TEXTURE_TARGET_2D_ARRAY && layers == 6)))
         flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
     // NVN renders into a 3D texture slice by slice (a view's min layer is the depth plane, nvn_mtl.m), e.g. the
     // grading LUT of the menu background blur. Vulkan needs a 2D view of the slice for that.
