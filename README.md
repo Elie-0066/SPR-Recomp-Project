@@ -21,11 +21,17 @@ copy of the game, and the executable you build from it is for your own use only.
 
 (This is also HEAVILY Vibecoded and experimental just so you know, if there is any problem let me know, also yes it was played and tested on a very cheap PC)
 
+**Follow me on X (Twitter) for news about the project: [@Lyriiiie](https://x.com/Lyriiiie).**
+
 ## Status
 
 **[Download the latest release](https://github.com/Elie-0066/SPR-Recomp-Project/releases/latest)** (Windows setup, no game data). **Early, playable in parts.** The title, the opening cutscene, the character creator, the hub and the first gameplay
 zone render and play at about 60 fps on the test machine (Ryzen 5 4500, RTX 3050). Known open issue: the game's
 neural-network upscaler is stood in for by FSR 1 EASU.
+
+**Ultrawide.** The F1 menu's *Ultrawide* setting (Screen tab, after a restart) renders 21:9 (2560 x 1080) or 32:9
+(3072 x 864) with the camera's view widened; the HUD keeps its 16:9 layout in the middle. Docked mode only. The F1 menu
+is in English, Russian and Korean.
 
 **Game versions.** Update 65536 is the only version SPR Recomp is developed and tested on. The setup also builds the base
 game (1.0.0) and later updates, but that support is **experimental**: it is not certain that they build, start or play
@@ -69,6 +75,10 @@ Whether SPR Recomp runs on AMD (Radeon) GPUs is **unknown**. Every test so far w
 maintainer has no machine with an AMD GPU to test on for now. The renderer only uses standard Vulkan, so it may work,
 but the upstream projects saw AMD-specific problems (DKB Recomp had a device loss on AMD only), and some workarounds in
 this code are tuned for NVIDIA's driver.
+
+Version 0.1.8 has an **experimental** fix for AMD: a textured array the game never samples as a cube is no longer made
+cube compatible, a combination AMD's Windows driver is known to sample wrongly (it matches the glitching sky texture
+reported on a ROG Ally). It was checked on NVIDIA only, so it is not a guarantee that every AMD problem is solved.
 
 If you have an AMD card, a report is very welcome either way: open an
 [issue](https://github.com/Elie-0066/SPR-Recomp-Project/issues) with your GPU, driver version, how far the game got
