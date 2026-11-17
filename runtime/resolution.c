@@ -324,7 +324,8 @@ int res_sizes(unsigned out[2], unsigned scene[2]) {
     return 1;
 }
 
-// ---- Splatoon Raiders ultrawide (TOTK_RAIDERS_WIDE: off, 21:9 = 2560x1080, 32:9 = 3072x864)
+// ---- Splatoon Raiders ultrawide (TOTK_RAIDERS_WIDE: off, 21:9 = 2560x1080, 32:9 = 3072x864, or 3440x1440,
+// 3840x1600, 3840x1080)
 // The graphics module's resolution update (main+34eb2c0) takes the size the display mode asks for (3840x2160 docked,
 // times a float of the display class: 0.8 at class 1, 3072x1728) and caps each side by the class's entry of the table
 // at main+4162c24 (640x480 ... 3840x2160), then sizes its render targets, its 3D scene (two thirds of the output) and
@@ -332,6 +333,11 @@ int res_sizes(unsigned out[2], unsigned scene[2]) {
 // object's initial state) never reads the table. raiders_wide_init writes the wide size over the class 1 entry
 // (2560x1440) and ov_system.c ov_graphics_scale then reports class 1: the game composes its frame at that size, as the
 // window crop and the upscaler show (1707x720 -> 2560x1080). 3072 is the widest class 1 asks for.
+// Wider sizes (issue #13): the class's factor is a pair of floats in the resolution object (x then y, at
+// object + 0x208 * mode + 0xf0 + class * 8 + 0x1e4, mode the int8 the update reads at +0x546 or +0x548).
+// raiders_wide_scale runs at the update's entry and sets class 1's 0.8 to 1.0 in both modes, so the game asks for
+// 3840x2160 and the table entry caps it to the wide size. 3840 is the most: the game's window textures are 3840x2160
+// whatever the class. A factor that is not 0.8 is left alone and logged (another game version).
 // The cameras keep 16:9 by themselves: sead's PerspectiveProjection (constructor main+3d76360: tan of half the fovy at
 // +0xac, aspect at +0xb0) holds 16/9, and its matrix (main+31f1940, a vtable entry that six functions also call
 // directly) would stretch the picture. raiders_wide_projection runs at that function's entry for every caller (cpu.h
@@ -345,8 +351,12 @@ int res_sizes(unsigned out[2], unsigned scene[2]) {
 #define RAIDERS_RES_TABLE 0x7004162c24ull   // {w, h} uint32 pairs, class 1 at index 5
 #define RAIDERS_PROJ_MATRIX 0x70031f1940ull
 #define RAIDERS_NARROW_FOVY 0.1745f         // 10 degrees in radians
+#define RAIDERS_RES_UPDATE 0x70034eb2c0ull   // the resolution update; x0 the resolution object
+#define RAIDERS_CLASS_W 3072u               // widest output class 1 asks for at its own factor (0.8 * 3840)
 
 static struct { unsigned w, h; float aspect; int on; } RW;
+
+int raiders_wide_scales(void) { return RW.on && RW.w > RAIDERS_CLASS_W; }
 
 static void raiders_wide_decide(void) {
     static int done;
@@ -356,6 +366,9 @@ static void raiders_wide_decide(void) {
     const char *v = cfg_value("TOTK_RAIDERS_WIDE");
     if (!strcmp(v, "21:9")) RW.w = 2560, RW.h = 1080;
     else if (!strcmp(v, "32:9")) RW.w = 3072, RW.h = 864;
+    else if (!strcmp(v, "3440x1440")) RW.w = 3440, RW.h = 1440;
+    else if (!strcmp(v, "3840x1600")) RW.w = 3840, RW.h = 1600;
+    else if (!strcmp(v, "3840x1080")) RW.w = 3840, RW.h = 1080;
     else return;
     // Handheld, the update caps by the 1920x1080 entry whatever the class: the output would stay 16:9 under widened
     // cameras.
@@ -389,6 +402,26 @@ void raiders_wide_init(void) {
     if (!plat_mem_protect(page, 0x2000, PLAT_PROT_READ)) rt_fatal("raiders wide: cannot seal the resolution table");
     g_fnprof = 1;
     rt_log("raiders wide: output %ux%u (class 1), camera aspect %.4f for projections at 16:9", RW.w, RW.h, RW.aspect);
+}
+
+void raiders_wide_scale(uint64_t obj) {
+    static int done;
+    if (done) return;
+    done = 1;
+    const uint32_t one = 0x3f800000u, f08 = 0x3f4ccccdu;   // 1.0f, 0.8f
+    for (int mode = 0; mode < 2; mode++) {
+        uint64_t at = obj + 0x208ull * mode + 0xf0 + 1 * 8 + 0x1e4;
+        uint32_t x = LD32(at), y = LD32(at + 4);
+        if (x == f08 && y == f08) {
+            ST32(at, one);
+            ST32(at + 4, one);
+            rt_log("raiders wide: mode %d class 1 factor 0.8 -> 1.0 (asks for 3840x2160, capped to %ux%u)", mode, RW.w,
+                   RW.h);
+        } else {
+            rt_log("raiders wide: mode %d class 1 factor is %08x %08x, not 0.8; left alone (the output stays at most "
+                   "%ux%u)", mode, x, y, RAIDERS_CLASS_W, RW.h);
+        }
+    }
 }
 
 void raiders_wide_projection(uint64_t proj) {

@@ -145,6 +145,11 @@ Each one cost a session; they are listed so the next one does not repeat the sea
   layout, centred. Checked on an RTX 3050 in the first zone at 60 fps, windowed and fullscreen on a 2560x1080 screen.
   `FN_ENTER` calls the host at every guest function entry while it is on; a lifter patch at `main+31f1940` would
   remove that cost.
+  Wider sizes (issue #13: 3440x1440, 3840x1600, 3840x1080): the per-class factor is a pair of floats in the resolution
+  object (`+0x208 * mode + 0xf0 + class * 8 + 0x1e4`, x then y). `raiders_wide_scale`, run at `main+34eb2c0`'s entry,
+  sets class 1's 0.8 to 1.0 in both modes, so the game asks for 3840x2160 and the table caps it. 3840 is the limit:
+  the window textures are 3840x2160 whatever the class. Checked at 3840x1600 (window crop 3840x1600, 3D scene
+  2560x1067) on an RTX 3050.
 
 ### Lifter gaps found and closed
 

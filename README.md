@@ -27,8 +27,8 @@ copy of the game, and the executable you build from it is for your own use only.
 zone render and play at about 60 fps on the test machine (Ryzen 5 4500, RTX 3050). Known open issue: the game's
 neural-network upscaler is stood in for by FSR 1 EASU.
 
-**Ultrawide.** The F1 menu's *Ultrawide* setting (Screen tab, after a restart) renders 21:9 (2560 x 1080) or 32:9
-(3072 x 864) with the camera's view widened; the HUD keeps its 16:9 layout in the middle. Docked mode only. The F1 menu
+**Ultrawide.** The F1 menu's *Ultrawide* setting (Screen tab, after a restart) renders 21:9 (2560 x 1080, 3440 x 1440
+or 3840 x 1600) or 32:9 (3072 x 864 or 3840 x 1080) with the camera's view widened; the HUD keeps its 16:9 layout in the middle. Docked mode only. The F1 menu
 is in English, Russian and Korean.
 
 **Game versions.** Update 65536 is the only version SPR Recomp is developed and tested on. The setup also builds the base

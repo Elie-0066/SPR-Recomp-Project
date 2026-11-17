@@ -81,8 +81,9 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                                  "1920 x 1080, 2560 x 1440 or 3840 x 2160; handheld 1280 x 720 at 1080p and "
                                  "1920 x 1080 above. Higher needs more video memory and GPU time.",
     [UI_MENU_RAIDERS_WIDE] = "Ultrawide",
-    [UI_MENU_RAIDERS_WIDE_DESC] = "Widens the picture and the camera's view for a 21:9 or 32:9 screen: the game renders "
-                                  "2560 x 1080 or 3072 x 864 and the window or screen scales it. The HUD keeps its "
+    [UI_MENU_RAIDERS_WIDE_DESC] = "Widens the picture and the camera's view for a 21:9 or 32:9 screen: the game "
+                                  "renders 2560 x 1080 to 3840 x 1600 (21:9) or 3072 x 864 to 3840 x 1080 (32:9) and "
+                                  "the window or screen scales it; larger sizes cost more GPU time. The HUD keeps its "
                                   "proportions in a centred 16:9 area. Replaces Resolution while on. Restart to apply.",
     [UI_MENU_UPSCALER] = "Scaling to the window",
     [UI_MENU_UPSCALER_DESC] = "How the picture is scaled when the window is larger than the game resolution. FSR keeps "
@@ -408,10 +409,11 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                                  "док-станции 1920 × 1080, 2560 × 1440 или 3840 × 2160; в портативном режиме 1280 × 720 "
                                  "при 1080p и 1920 × 1080 выше. Чем выше, тем больше видеопамяти и времени GPU.",
     [UI_MENU_RAIDERS_WIDE] = "Ультраширокий экран",
-    [UI_MENU_RAIDERS_WIDE_DESC] = "Расширяет изображение и обзор камеры для экрана 21:9 или 32:9: игра рисует "
-                                  "2560 × 1080 или 3072 × 864, а окно или экран масштабирует картинку. Интерфейс "
-                                  "сохраняет пропорции в центральной области 16:9. Пока включено, заменяет "
-                                  "«Разрешение». Применяется после перезапуска.",
+    [UI_MENU_RAIDERS_WIDE_DESC] = "Расширяет изображение и обзор камеры для экрана 21:9 или 32:9: игра рисует от 2560 "
+                                  "× 1080 до 3840 × 1600 (21:9) или от 3072 × 864 до 3840 × 1080 (32:9), а окно или "
+                                  "экран масштабирует картинку; большие размеры дольше рисуются. Интерфейс сохраняет "
+                                  "пропорции в центральной области 16:9. Пока включено, заменяет «Разрешение». "
+                                  "Применяется после перезапуска.",
     [UI_MENU_UPSCALER] = "Масштабирование под окно",
     [UI_MENU_UPSCALER_DESC] = "Как картинка растягивается, когда окно больше разрешения игры. FSR сохраняет края и "
                               "детали чётче билинейного.",
@@ -733,9 +735,9 @@ static const char *const text_ko[UI_TEXT_COUNT] = {
                                  "1920 x 1080, 2560 x 1440 또는 3840 x 2160, 휴대 모드는 1080p에서 1280 x 720, 그 이상에서 "
                                  "1920 x 1080입니다. 높을수록 비디오 메모리와 GPU 시간이 더 필요합니다.",
     [UI_MENU_RAIDERS_WIDE] = "울트라와이드",
-    [UI_MENU_RAIDERS_WIDE_DESC] = "21:9 또는 32:9 화면에 맞게 화면과 카메라 시야를 넓힙니다. 게임은 2560 x 1080 또는 "
-                                  "3072 x 864로 렌더링하고 창이나 화면이 이를 확대/축소합니다. HUD는 가운데 16:9 영역에서 "
-                                  "비율을 유지합니다. 켜져 있는 동안 해상도 설정을 대신합니다. 재시작해야 적용됩니다.",
+    [UI_MENU_RAIDERS_WIDE_DESC] = "21:9 또는 32:9 화면에 맞게 화면과 카메라 시야를 넓힙니다. 게임은 2560 x 1080~3840 x 1600(21:9) 또는 3072 x "
+                                  "864~3840 x 1080(32:9)로 렌더링하고 창이나 화면이 이를 확대/축소합니다. 큰 크기일수록 GPU 부담이 커집니다. HUD는 가운데 "
+                                  "16:9 영역에서 비율을 유지합니다. 켜져 있는 동안 해상도 설정을 대신합니다. 재시작해야 적용됩니다.",
     [UI_MENU_UPSCALER] = "창 크기에 맞춘 확대",
     [UI_MENU_UPSCALER_DESC] = "창이 게임 해상도보다 클 때 화면을 확대하는 방식입니다. FSR은 바이리니어보다 가장자리와 "
                               "디테일을 더 선명하게 유지합니다.",

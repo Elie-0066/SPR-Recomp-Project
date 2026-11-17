@@ -297,6 +297,8 @@ void res_wanted(unsigned out[2]);                          // the output size TO
 int raiders_wide_class(void);                              // TOTK_RAIDERS_WIDE: the display class to report (1), -1 off
 void raiders_wide_init(void);                              // boot, before graphics: the wide size into the game's table
 void raiders_wide_projection(uint64_t proj);               // main.c fnprof_hit: 16:9 projection aspect to the output's
+int raiders_wide_scales(void);                             // a wide size above 3072: raiders_wide_scale is needed
+void raiders_wide_scale(uint64_t obj);                     // main.c fnprof_hit: class 1's 0.8 factor to 1.0, once
 void res_fov_live(void);                                   // TOTK_FOV to the camera (set fov); on a settings change
 // ---- code patches (patches.c) and the frame step (frame_rate.c)
 void rt_patches_init(void);                                // after ldr_load: switches from the environment, the patch
