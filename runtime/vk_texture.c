@@ -451,8 +451,19 @@ static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
         rt_log("vk: 3D BC textures %s (TOTK_BLOCK_VIEWS_3D=%d)", bv3d ? "get block views (renderable)" : "have no block views",
                bv3d);
     }
+    // TOTK_CUBE_BLOCK_VIEWS (default 1, 0 on AMD GPUs): a cube-compatible BC image also gets block views. Splatoon
+    // Raiders' sky is a BC3 cube of 6 layers and 9 levels, uploaded from the game's files and never rendered into;
+    // with CUBE_COMPATIBLE, BLOCK_TEXEL_VIEW_COMPATIBLE and the colour attachment usage together, an RX 9070 XT (driver
+    // 26.10.1, SPR issue #14) showed a posterized sky and water and a sky of streaks, what wrong levels of the cube
+    // look like: the shape mkw-recomp and Savage Wind Recomp found AMD's Windows driver samples wrongly past level 0
+    // is a mipmapped, cube-compatible BC image. Without block views the image is a plain BC cube.
+    static int cube_bv = -1;
+    if (cube_bv < 0) {
+        cube_bv = rt_knob("CUBE_BLOCK_VIEWS", vk_caps.amd ? "0" : "1");
+        if (!cube_bv) rt_log("vk: cube-compatible BC textures have no block views (TOTK_CUBE_BLOCK_VIEWS=0)");
+    }
     if (!ds && samples == 1 && f.vk == f.ideal && nvn_fmt_bpb(d->format, &bw, &bh) && bw == 4 && bh == 4 &&
-        (type != VK_IMAGE_TYPE_3D || bv3d)) {
+        (type != VK_IMAGE_TYPE_3D || bv3d) && (cube_bv || !(flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT))) {
         VkImageCreateInfo bc = ci;   // BC formats: renderable through views of their blocks (block_views_ok)
         bc.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         bc.flags |= VK_IMAGE_CREATE_BLOCK_TEXEL_VIEW_COMPATIBLE_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;

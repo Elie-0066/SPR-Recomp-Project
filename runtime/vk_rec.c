@@ -145,10 +145,15 @@ void rec_drain(void) {
 void rec_begin(VkCommandBuffer cb) {
     static int mode = -1;
     if (mode < 0) {
-        // Default on for every GPU. AMD drivers once lost the device with the recorder (issues #5 and #40); after
-        // vk_mem_note_recording kept objects alive until their submission completed and the recorder began ending
-        // its own parts (rec_end_cb), RDNA 1 and 2 cards ran with it on and off without a loss or a white scene.
-        mode = rt_knob("VK_RECORDER", "1");
+        // Default on, except on AMD GPUs. AMD drivers once lost the device with the recorder (issues #5 and #40);
+        // after vk_mem_note_recording kept objects alive until their submission completed and the recorder began
+        // ending its own parts (rec_end_cb), RDNA 1 and 2 cards ran with it on and off without a loss or a white scene.
+        // Splatoon Raiders on an RX 9070 XT (driver 26.10.1) crashes at launch with it and starts with
+        // vk_recorder = 0 (SPR issue #14), as DKB Recomp's later builds also turned it off; vk_recorder = 1 in the
+        // settings still turns it on.
+        mode = rt_knob("VK_RECORDER", vk_caps.amd ? "0" : "1");
+        if (vk_caps.amd && !cfg_is_set("TOTK_VK_RECORDER"))
+            rt_log("vk_rec: off by default on AMD GPUs (vk_recorder = 1 turns it on)");
         if (mode) {
             rec_batch = cfg_int("TOTK_REC_BATCH");
             if (rec_batch < 0) rec_batch = 0;

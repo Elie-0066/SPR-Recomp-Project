@@ -97,6 +97,12 @@ Each one cost a session; they are listed so the next one does not repeat the sea
   cube: a block-compressed, mipmapped array with `CUBE_COMPATIBLE` is what mkw-recomp and Savage Wind Recomp saw AMD's
   Windows driver sample wrongly past mip 0 (rainbow blocks that move with the mip level). `vk_texture.c` `create_tex`
   now flags exactly 6 layers. Not yet confirmed on an AMD GPU (issue #2, ROG Ally: a glitching sky texture).
+- **AMD defaults (issue #14, RX 9070 XT, driver 26.10.1).** The game crashed at launch with the recorder thread and
+  ran with `vk_recorder = 0`, so `vk_rec.c` `rec_begin` leaves it off on AMD GPUs. The sky and water came out
+  posterized and the sky in streaks: the BC3 sky cube (6 layers, 9 levels, uploaded, never drawn into) carried block
+  views on top of `CUBE_COMPATIBLE`, the mipmapped cube-compatible BC shape AMD's Windows driver samples wrongly past
+  level 0. `vk_texture.c` `create_tex` gives cube-compatible BC images no block views on AMD
+  (`TOTK_CUBE_BLOCK_VIEWS`). Not yet confirmed on an AMD GPU.
 - **Bananza's light-quad skip does not apply** (`light_quad_fault_skip`): those quads are this game's lighting.
 - **Frame dumps.** `TOTK_DUMP=key` and F9 dump a frame; `TOTK_DUMP_PAIR=1` the next one too; `TOTK_DUMP_MIN_DRAWS=N` copies images only of passes with N draws or more (a full frame has 350 passes and the PNGs take minutes otherwise); `TOTK_DUMP_UBO=1` prints 32 uniform vectors per stage; `TOTK_DUMP_BUF=cs5` follows the buffer bound as compute SSBO slot 5. `TOTK_DUMP=probe` starts a dump by itself when the 78-layer reflection arrays are baked. The `hang:` lines the host writes after 10 s without a present name every guest thread, with its native stack.
 - **The 880x880 passes are the hub's ink.** FS `3f6af34afb0c405a` (VS `245a619125222d33`) is drawn about 285 times per frame into 880x880 targets in the character creator and the hub; in the levels the same pair draws into targets of other sizes, 90-170 times per frame. `vk_exec_draw.c` `raiders_skip_880` used to skip it at 880x880, when it held the character creator at 18-19 fps, and the hub's ground then took no ink. After the later fixes drawing it costs no measurable frame rate, so it is drawn by default; `TOTK_RAIDERS_SKIP_880=1` skips it again.
