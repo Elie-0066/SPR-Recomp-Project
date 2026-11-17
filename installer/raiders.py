@@ -43,6 +43,8 @@ EXE_NAME = 'spr-recomp' + B.EXE
 MODULES = ('main', 'sdk', 'subsdk0')
 EXEFS_FILES = ('main', 'main.npdm', 'rtld', 'sdk', 'subsdk0')
 NUP_PART = '.setup-nup'   # the .nup is extracted here, inside the install folder, then renamed into place
+XBOX_DIR = 'romfs-patches-xbox'   # the Xbox button prompts (Prepare.xbox_prompts)
+XBOX_TOOL = 'raiders_xbox_prompts.py'
 # Work space beyond the RomFS: about 1.3 GB of generated C, 0.4 GB of objects, the 300 MB executable, the shader and
 # pipeline caches.
 TEMP_NEED = 6 << 30
@@ -176,7 +178,7 @@ def plain_destination(dest, dlls=()):
     files = (STATE, STATE + '.tmp', DEST_OWNER, '.dkb-setup.lock', 'dkb.ini', 'dkb.ini.tmp', 'totk.ini',
              'totk.ini.tmp', 'romfs-index.bin', 'seed-nvn2.bin', EXE_NAME, 'totk_xlate' + B.EXE, 'totk_xlate.id',
              *(p.name for p in dlls))
-    for name in ('exefs', 'romfs', NUP_PART, *files, *(name + '.setup-part' for name in files)):
+    for name in ('exefs', 'romfs', NUP_PART, XBOX_DIR, *files, *(name + '.setup-part' for name in files)):
         B.plain_tree(dest / name)
 
 
@@ -270,7 +272,7 @@ def preflight(layout, options, dest, temp, rep):
     if not version.get('verified'):
         rep.warning('warn.spr_version_experimental', version=version['display_version'])
     missing = [p for p in (layout.clang, layout.ninja, layout.recomp / 'gen.py', layout.tools / 'shader_census.py',
-                           layout.tools / 'romfs_index.py', layout.tools / 'build_game.py',
+                           layout.tools / 'romfs_index.py', layout.tools / 'build_game.py', layout.tools / XBOX_TOOL,
                            *([layout.tools / 'extract_nup.py'] if nup_arg else []),
                            layout.runtime / 'nvn2_lower.cpp', layout.tools / 'data' / f'expected-{GAME}.json')
                if not p.is_file()]
@@ -510,7 +512,8 @@ class Prepare(Step):
     id = 'dkb_verify'
 
     def key(self, ctx):
-        return B.digest(ctx.keys['compile'], ctx.keys['dkb_translator'], ctx.state['lang'])
+        return B.digest(ctx.keys['compile'], ctx.keys['dkb_translator'], ctx.state['lang'],
+                        B.sha256(ctx.layout.tools / XBOX_TOOL))
 
     def current(self, ctx, record):
         return record.get('selftest') is True
@@ -520,8 +523,30 @@ class Prepare(Step):
             B.ensure_plain(ctx.dest / name)
         # The runtime reads dkb.ini for this target (runtime/cfg.c), the settings file of every non-TotK build.
         ini.write(ctx.dest, ctx.state['lang'], ctx.layout.ini_example, 'dkb.ini', fallback='totk.ini')
+        self.xbox_prompts(ctx)
         run_tool(ctx, self.id, [ctx.dest / EXE_NAME, '--selftest'])
         return {'selftest': True}
+
+    def xbox_prompts(self, ctx):
+        """romfs-patches-xbox: the pictogram font with the A/B and X/Y prompts swapped, for pad_layout = xbox_prompts
+        (tools/raiders_xbox_prompts.py; runtime/romfs.c overlay_init loads it next to romfs-index.bin). Written on
+        every install, so the menu choice works without another run of the setup. Optional: when it fails, the game
+        keeps the Switch prompts and the menu says the files are missing, so the setup warns and goes on."""
+        out = ctx.dest / XBOX_DIR
+        B.ensure_plain(out)
+        if out.exists():
+            B.plain_tree(out)
+            shutil.rmtree(out)
+        try:
+            run_tool(ctx, self.id, [ctx.layout.python, ctx.layout.tools / XBOX_TOOL, '--romfs', ctx.info['romfs_dir'],
+                                    '--out', out], name=f'{self.id}-xbox')
+        except InstallError as error:
+            if error.id != 'dkb.tool_failed':
+                raise
+            if out.exists():
+                shutil.rmtree(out)
+            ctx.reporter.warning('warn.xbox_prompts_failed', code=error.params.get('code'),
+                                 log=str(error.params.get('log')))
 
 
 class Cleanup(Step):

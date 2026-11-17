@@ -338,9 +338,13 @@ int res_sizes(unsigned out[2], unsigned scene[2]) {
 // FN_ENTER, with the projection in x0) and replaces an aspect of 16:9 by the output's before the matrix is built;
 // other aspects (the 4:3 and 1:1 projections of shadows and probes) stay. The field keeps the wide value, so the
 // projection's own screen-to-camera conversions agree with the matrix.
+// Narrow projections stay 16:9 too: the menus' character preview (equipment, style) is a 5-degree telephoto camera
+// whose picture the menu shows in a 16:9 area, so widening it squeezed the character (issue #15). The game's own
+// cameras measured 40 to 90 degrees (fovy at +0xa0, radians); RAIDERS_NARROW_FOVY is 10 degrees.
 // The cost: FN_ENTER calls the host at every guest function entry while the hook is on.
 #define RAIDERS_RES_TABLE 0x7004162c24ull   // {w, h} uint32 pairs, class 1 at index 5
 #define RAIDERS_PROJ_MATRIX 0x70031f1940ull
+#define RAIDERS_NARROW_FOVY 0.1745f         // 10 degrees in radians
 
 static struct { unsigned w, h; float aspect; int on; } RW;
 
@@ -388,9 +392,11 @@ void raiders_wide_init(void) {
 }
 
 void raiders_wide_projection(uint64_t proj) {
-    uint32_t bits = LD32(proj + 0xb0);
-    float a;
+    uint32_t bits = LD32(proj + 0xb0), fovy_bits = LD32(proj + 0xa0);
+    float a, fovy;
     memcpy(&a, &bits, 4);
+    memcpy(&fovy, &fovy_bits, 4);
+    if (fovy < RAIDERS_NARROW_FOVY) return;   // a menu preview camera
     if (a > 1.7689f && a < 1.7867f) {   // 16:9 within half a percent
         memcpy(&bits, &RW.aspect, 4);
         ST32(proj + 0xb0, bits);

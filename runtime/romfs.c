@@ -237,7 +237,17 @@ static int overlay_load(const char *dir, int optional) {
         Entry e = {0};
         if (known) {
             e = entry(i);
+#ifdef ROMFS_DIRECTORY
+            // A loose RomFS (Raiders) has no image: the original is its own file in the folder, at offset 0.
+            char loose[4200];
+            need(snprintf(loose, sizeof loose, "%s/%s", image_file, name) < (int)sizeof loose, "overlay original path");
+            PlatFile *of = open_read(loose);
+            if (!of) BAD("RomFS overlay: the original %s is missing", loose);
+            sha_range(of, 0, e.size, hex, 0);
+            plat_file_close(of);
+#else
             sha_range(image, e.offset, e.size, hex, 0);
+#endif
             if (strcmp(hex, orig)) BAD("RomFS overlay: the original of %s has SHA-256 %s, %s/manifest.tsv says %s",
                                        name, hex, dir, orig);
         } else {
@@ -321,6 +331,9 @@ static void added_init(void) {
 // written to <profile>/resolution/ and served in the base's place.
 #define HEAPDEF "System/HeapSize/Product.Nin_NX_NVN.HeapDef.byml.zs"
 static void heapdef_overlay(void) {
+#ifdef ROMFS_DIRECTORY
+    return;   // TotK's table, read from the image; a loose RomFS has neither
+#endif
     if (!res_heap_extra_kib()) return;
     uint64_t i = lower(HEAPDEF);
     if (i >= file_count || strcmp(entry_name(entry(i)), HEAPDEF)) {
@@ -514,7 +527,10 @@ static void init_once(void *param) {
     need(plat_dir_exists(dir), "loose RomFS directory is missing");
     snprintf(image_file, sizeof image_file, "%s", dir);
     rt_log("RomFS directory %s: %llu indexed files", dir, (unsigned long long)file_count);
-    rt_log("RomFS ready: loose directory, %.2f s", now_s() - t0);
+    // Overlays work on a loose folder too (Raiders' romfs-patches-xbox): overlay_load hashes each original in the
+    // folder and romfs_open serves the overlay in its place.
+    overlay_init();
+    rt_log("RomFS ready: loose directory, %zu overlays, %zu added, %.2f s", noverlay, nadded, now_s() - t0);
     return;
 #endif
     need(snprintf(image_file, sizeof image_file, "%s/romfs.bin", dir) < (int)sizeof image_file, "image path");
@@ -611,24 +627,28 @@ uint32_t romfs_open(uint64_t *out, const char *path, int mode) {
     uint64_t i = file_index(p);
     if (i == UINT64_MAX) return FS_R_PATH_NOT_FOUND;
 #ifdef ROMFS_DIRECTORY
-    char full[4096];
-    if (snprintf(full, sizeof full, "%s/%s", rt_config()->romfs, p) >= (int)sizeof full)
-        return FS_R_INVALID;
-    PlatFile *direct = open_read(full);
-    if (!direct) return FS_R_PATH_NOT_FOUND;
-    plat_mutex_lock(&lock);
-    for (unsigned j = 1; j < NH; j++)
-        if (!handles[j]) {
-            handles[j] = i + 1;
-            handle_ovl[j] = UINT32_MAX;
-            handle_file[j] = direct;
-            *out = ROMFS_HANDLE_BASE + j;
-            plat_mutex_unlock(&lock);
-            return 0;
-        }
-    plat_mutex_unlock(&lock);
-    plat_file_close(direct);
-    rt_fatal("RomFS file handle table full (%d)", NH);
+    // A file an overlay replaces or adds is served from the overlay below, as with an image; the others are opened
+    // in the folder.
+    if (!overlay_slot(i)) {
+        char full[4096];
+        if (snprintf(full, sizeof full, "%s/%s", rt_config()->romfs, p) >= (int)sizeof full)
+            return FS_R_INVALID;
+        PlatFile *direct = open_read(full);
+        if (!direct) return FS_R_PATH_NOT_FOUND;
+        plat_mutex_lock(&lock);
+        for (unsigned j = 1; j < NH; j++)
+            if (!handles[j]) {
+                handles[j] = i + 1;
+                handle_ovl[j] = UINT32_MAX;
+                handle_file[j] = direct;
+                *out = ROMFS_HANDLE_BASE + j;
+                plat_mutex_unlock(&lock);
+                return 0;
+            }
+        plat_mutex_unlock(&lock);
+        plat_file_close(direct);
+        rt_fatal("RomFS file handle table full (%d)", NH);
+    }
 #endif
     uint32_t ov = overlay_slot(i);
     PlatFile *f = NULL;

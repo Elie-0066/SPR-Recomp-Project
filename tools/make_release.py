@@ -121,7 +121,8 @@ GAMES = {'totk': dict(lifted=('v121', 'v143'), name='TotK-Setup', text='', ini='
                      tools=['build_xlate.py', 'dkb_pack_romfs.py', 'dkb_shader_census.py', 'extract_nup.py']),
          # Raiders' runtime reads dkb.ini too (runtime/cfg.c); its census and RomFS index are in TOOLS_FILES.
          'raiders': dict(lifted=(), name='SPR-Setup', text='spr.', ini='dkb.ini.example', source=True,
-                         tools=['build_xlate.py', 'extract_nup.py'])}   # extract_nup: .nup input
+                         # extract_nup: .nup input; raiders_xbox_prompts: romfs-patches-xbox
+                         tools=['build_xlate.py', 'extract_nup.py', 'raiders_xbox_prompts.py'])}
 SOURCE_TOOLS_DIRS = ['vendor/ryujinx', 'xlate']   # translator identity hashes these
 
 
