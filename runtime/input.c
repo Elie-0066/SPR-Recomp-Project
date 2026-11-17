@@ -28,6 +28,8 @@ enum { STICK_MAX = 32767, STICK_DIR = 16384, TRIGGER_ON = 16384, RESCAN_MS = 100
 static PlatMutex lock = PLAT_MUTEX_INIT;
 static int state;                    // 0 not started, 1 running, -1 disabled or SDL failed
 static SDL_Gamepad *pad;
+static SDL_Gamepad *ds5_pad;   // the DualSense whose trigger holds an adaptive effect (ds5_triggers)
+static int ds5_force;          // the force sent to it, 0 none
 static uint64_t next_scan;
 static int pad_rumble;               // the open gamepad has rumble motors
 static volatile int32_t pad_labels[4];  // ... and the labels of its south, east, west, north buttons (PAD_LABEL_*), any thread
@@ -392,6 +394,7 @@ static void scan_pads(void) {
     if (pad && SDL_GamepadConnected(pad)) return;
     if (pad) {
         SDL_CloseGamepad(pad); pad = NULL; sensor_pad = 0; sensor_ok = 0;
+        ds5_pad = NULL, ds5_force = 0;   // closed with it: no effect to clear at exit
         plat_xchg32(&pad_layout_shown, -1);
         for (int i = 0; i < 4; i++) plat_xchg32(&pad_labels[i], PAD_LABEL_NONE);
         rt_log("input: gamepad disconnected");
@@ -526,11 +529,56 @@ static int pad_physical(uint8_t pd[PAD_COUNT]) {
     return 1;
 }
 
+// DualSense adaptive triggers (TOTK_ADAPTIVE_TRIGGERS: off, light, strong; SPR issue #16): R2, where ZR (shoot) sits
+// by default, resists along its whole pull. The effect is the DualSense output report's right trigger block
+// (SDL's DS5EffectsState_t, sent with SDL_SendGamepadEffect): enable bits 1 at offset 0 with 0x04 "right trigger
+// effect", the 11 effect bytes at offset 10. Mode 0x01 is a constant resistance from a start position with a force,
+// mode 0x05 turns the effect off (both as SDL's testcontroller CyclePS5TriggerEffect sends them). The controller keeps
+// an effect until it is switched off, so the effect is cleared when the setting goes off, and at exit.
+#define DS5_EFFECT_SIZE 47
+#define DS5_RIGHT_TRIGGER_BIT 0x04
+#define DS5_RIGHT_TRIGGER_AT 10
+
+static int ds5_send(SDL_Gamepad *g, int force) {
+    uint8_t e[DS5_EFFECT_SIZE] = {0};
+    e[0] = DS5_RIGHT_TRIGGER_BIT;
+    e[DS5_RIGHT_TRIGGER_AT] = force ? 0x01 : 0x05;
+    if (force) e[DS5_RIGHT_TRIGGER_AT + 2] = (uint8_t)force;   // start at 0 (+1), force (+2)
+    return SDL_SendGamepadEffect(g, e, sizeof e);
+}
+
+static void ds5_exit(void) {
+    if (ds5_pad && ds5_force) ds5_send(ds5_pad, 0);
+}
+
+// Under lock: the effect the setting asks for on the open gamepad, sent when the gamepad or the setting changed.
+static void ds5_triggers(void) {
+    static unsigned seen = ~0u;
+    static SDL_Gamepad *seen_pad;
+    if (cfg_version() == seen && pad == seen_pad) return;
+    seen = cfg_version(), seen_pad = pad;
+    if (ds5_pad && ds5_pad != pad) ds5_pad = NULL, ds5_force = 0;   // that gamepad went away (scan_pads closed it)
+    if (!pad || SDL_GetGamepadType(pad) != SDL_GAMEPAD_TYPE_PS5) return;
+    const char *v = cfg_value("TOTK_ADAPTIVE_TRIGGERS");
+    int force = !strcmp(v, "strong") ? 200 : !strcmp(v, "light") ? 110 : 0;
+    if (pad == ds5_pad && force == ds5_force) return;
+    if (!force && pad != ds5_pad) return;   // nothing sent to this pad yet: nothing to clear
+    if (!ds5_send(pad, force)) {
+        rt_log("input: DualSense trigger effect not sent (%s)", SDL_GetError());
+        return;
+    }
+    static int exit_hook;
+    if (!exit_hook) exit_hook = 1, atexit(ds5_exit);
+    ds5_pad = pad, ds5_force = force;
+    rt_log("input: DualSense adaptive trigger on R2: %s", force ? v : "off");
+}
+
 // Under lock, state 1: the open gamepad's buttons (Switch bits after TOTK_PAD_LAYOUT and the TOTK_BIND_* lines) and
 // sticks; 0 without a connected gamepad.
 static int pad_read(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
     uint8_t pd[PAD_COUNT] = {0};
     if (!pad_physical(pd)) return 0;
+    ds5_triggers();
     *b |= input_map_pad_buttons(pd, pad_layout_get());
     float dead = stick_dead_get();
     stick(SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY, dead, sl);
