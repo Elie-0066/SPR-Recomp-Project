@@ -179,8 +179,8 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_RUMBLE_TRIGGERS] = "Trigger vibration (Xbox)",
     [UI_MENU_RUMBLE_TRIGGERS_DESC] = "Vibrates the triggers of an Xbox controller too.",
     [UI_MENU_ADAPTIVE_TRIGGERS] = "Adaptive trigger (DualSense)",
-    [UI_MENU_ADAPTIVE_TRIGGERS_DESC] = "R2 of a DualSense resists as you pull it, for shooting. Other controllers are "
-                                       "not affected. The effect is removed when you turn it off or quit the game.",
+    [UI_MENU_ADAPTIVE_TRIGGERS_DESC] = "R2 of a DualSense vibrates while you shoot, harder on each kick the game "
+                                       "rumbles; released, it is free. Other controllers are not affected.",
     [UI_MENU_ADAPTIVE_LIGHT] = "Light", [UI_MENU_ADAPTIVE_STRONG] = "Strong",
     [UI_MENU_PAD_LAYOUT] = "Button layout",
     [UI_MENU_PAD_LAYOUT_DESC] = "Which button is A. Nintendo: the right one, as on a Switch. Xbox: the bottom one, as "
@@ -510,8 +510,8 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_RUMBLE_TRIGGERS] = "Вибрация триггеров (Xbox)",
     [UI_MENU_RUMBLE_TRIGGERS_DESC] = "Вибрация и в триггерах контроллера Xbox.",
     [UI_MENU_ADAPTIVE_TRIGGERS] = "Адаптивный триггер (DualSense)",
-    [UI_MENU_ADAPTIVE_TRIGGERS_DESC] = "R2 контроллера DualSense сопротивляется нажатию при стрельбе. На другие "
-                                       "контроллеры не влияет. Эффект снимается при выключении или выходе из игры.",
+    [UI_MENU_ADAPTIVE_TRIGGERS_DESC] = "R2 контроллера DualSense вибрирует во время стрельбы, сильнее при отдаче. "
+                                       "Отпущенный, он свободен. На другие контроллеры не влияет.",
     [UI_MENU_ADAPTIVE_LIGHT] = "Слабо", [UI_MENU_ADAPTIVE_STRONG] = "Сильно",
     [UI_MENU_PAD_LAYOUT] = "Раскладка кнопок",
     [UI_MENU_PAD_LAYOUT_DESC] = "Какая кнопка работает как A. Nintendo: правая, как на Switch. Xbox: нижняя, как "
@@ -833,8 +833,8 @@ static const char *const text_ko[UI_TEXT_COUNT] = {
     [UI_MENU_RUMBLE_TRIGGERS] = "트리거 진동 (Xbox)",
     [UI_MENU_RUMBLE_TRIGGERS_DESC] = "Xbox 컨트롤러의 트리거도 진동시킵니다.",
     [UI_MENU_ADAPTIVE_TRIGGERS] = "적응형 트리거 (DualSense)",
-    [UI_MENU_ADAPTIVE_TRIGGERS_DESC] = "사격할 때 DualSense의 R2를 당기면 저항이 느껴집니다. 다른 컨트롤러에는 영향이 "
-                                       "없습니다. 끄거나 게임을 종료하면 효과가 해제됩니다.",
+    [UI_MENU_ADAPTIVE_TRIGGERS_DESC] = "사격하는 동안 DualSense의 R2가 진동하고, 반동이 있을 때 더 강해집니다. "
+                                       "놓으면 자유롭습니다. 다른 컨트롤러에는 영향이 없습니다.",
     [UI_MENU_ADAPTIVE_LIGHT] = "약하게", [UI_MENU_ADAPTIVE_STRONG] = "강하게",
     [UI_MENU_PAD_LAYOUT] = "버튼 배치",
     [UI_MENU_PAD_LAYOUT_DESC] = "어느 버튼이 A인지 정합니다. Nintendo: Switch처럼 오른쪽 버튼. Xbox: Xbox 컨트롤러 표기처럼 "

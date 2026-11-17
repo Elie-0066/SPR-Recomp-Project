@@ -227,7 +227,8 @@
 # rumble_strength = 130
 # rumble_curve = 0.6
 # rumble_triggers = 0
-# DualSense adaptive trigger: R2 (shoot) resists along its pull, off, light or strong. Other pads are not affected.
+# DualSense adaptive trigger: R2 (shoot) vibrates while pulled, harder when the game rumbles; off, light or strong.
+# Other pads are not affected.
 # adaptive_triggers = light
 # Which gamepad button is Switch A: nintendo (by position: east A, south B, west Y, north X), xbox (south A, east B,
 # west X, north Y, as an Xbox pad labels them; cross A on a PlayStation pad) or auto (nintendo for a pad with Nintendo
