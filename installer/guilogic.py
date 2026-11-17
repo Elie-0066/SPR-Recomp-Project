@@ -140,7 +140,11 @@ class Form:
                     found.append('dkb.nup_and_folders')
             recorded = (self.installed_state() or {}).get('sources') or {}
             if update and not nup and not self.exefs.strip() and not self.romfs.strip() and recorded.get('nup'):
-                if not Path(recorded['nup']).is_file():   # moved or deleted since the last install: ask for it again
+                # Moved or deleted since the last install: ask for it again, unless the install folder still holds the
+                # ExeFS and RomFS the .nup gave it (Raiders, installer/raiders.py own_data).
+                dest = Path(self.dest.strip())
+                own = self.game == 'raiders' and (dest / 'exefs' / 'main').is_file() and (dest / 'romfs' / 'Shader').is_dir()
+                if not Path(recorded['nup']).is_file() and not own:
                     found.append('dkb.need_nup')
             for name in ('exefs', 'romfs'):
                 value = getattr(self, name).strip()

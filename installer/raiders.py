@@ -187,6 +187,25 @@ def plain_outputs(ctx):
     plain_destination(ctx.dest, ctx.layout.dlls)
 
 
+def own_data(dest, old, options):
+    """True when this run rebuilds from the ExeFS and RomFS an earlier .nup install left in the install folder: the
+    folder records a .nup install and holds both, and either no game files are given while the recorded .nup is gone,
+    or the folders given are those two. Without this an update asked for the .nup again, and choosing the install's own
+    folders failed because they sit inside the output folder (SPR issue #17)."""
+    recorded = (old or {}).get('sources') or {}
+    if not recorded.get('nup') and not recorded.get('installed'):
+        return False
+    exefs, romfs = dest / 'exefs', dest / 'romfs'
+    if not (exefs / 'main').is_file() or not romfs_ok(romfs):
+        return False
+    if getattr(options, 'nup', None):
+        return False
+    if not options.exefs and not options.romfs:
+        return not recorded.get('nup') or not Path(recorded['nup']).is_file()
+    same = lambda given, own: given is not None and Path(given).resolve() == own.resolve()
+    return same(options.exefs, exefs) and same(options.romfs, romfs)
+
+
 def preflight(layout, options, dest, temp, rep):
     if options.base or options.update or options.keys:
         raise InstallError('spr.update_unsupported')
@@ -202,10 +221,28 @@ def preflight(layout, options, dest, temp, rep):
     if nup_arg and (options.exefs or options.romfs):
         raise InstallError('dkb.nup_and_folders')
     recorded = old['sources'] if old else {}
-    if not nup_arg and not options.exefs and not options.romfs and recorded.get('nup'):
+    own = own_data(dest, old, options)
+    if not own and not nup_arg and not options.exefs and not options.romfs and recorded.get('nup'):
         nup_arg = Path(recorded['nup'])
     rep.progress('check', 'dkb_base')
-    if nup_arg:
+    if own:
+        # The install's own ExeFS and RomFS, which an earlier .nup install extracted there: an update to a new release
+        # rebuilds from them, without the .nup (SPR issue #17). The .nup's path stays recorded for a later run.
+        exefs, romfs = dest / 'exefs', dest / 'romfs'
+        hashes = exefs_folder_hashes(exefs)
+        try:
+            game = npdm_program_id((exefs / 'main.npdm').read_bytes())
+        except OSError:
+            game = None
+        if game != program_id(layout):
+            raise InstallError('spr.wrong_game', path=str(exefs / 'main.npdm'))
+        version = identify(layout, hashes)
+        listing, romfs_size = romfs_listing(romfs), 0
+        inputs = ()
+        sources = {k: v for k, v in recorded.items() if k in ('nup', 'nup_package')}
+        sources['installed'] = True
+        romfs_dir = romfs
+    elif nup_arg:
         for p in (nup_arg, dest, temp):
             B.ensure_plain(p.absolute())
         nup = nup_arg.resolve()
@@ -374,6 +411,11 @@ class Data(Step):
 
     def run(self, ctx):
         sources = ctx.info['sources']
+        if sources.get('installed'):   # the install folder's own ExeFS and RomFS (own_data): nothing to copy
+            check_exefs(ctx.dest / 'exefs', ctx.info['hashes'])
+            if B.digest(romfs_listing(ctx.dest / 'romfs')) != ctx.info['romfs_id']:
+                raise InstallError('dkb.input_changed', path=str(ctx.dest / 'romfs'))
+            return {'romfs_files': ctx.info['romfs_files']}
         if 'nup' in sources:
             # Extracted inside the install folder, so the multi-gigabyte RomFS is renamed into place, not copied; every
             # file is checked against its SHA-256 record in the container.
