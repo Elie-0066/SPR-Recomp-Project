@@ -76,7 +76,10 @@ this code are tuned for NVIDIA's driver.
 
 Version 0.1.8 has an **experimental** fix for AMD: a textured array the game never samples as a cube is no longer made
 cube compatible, a combination AMD's Windows driver is known to sample wrongly (it matches the glitching sky texture
-reported on a ROG Ally). It was checked on NVIDIA only, so it is not a guarantee that every AMD problem is solved.
+reported on a ROG Ally). Version 0.1.9 adds two more for AMD, from a report on an RX 9070 XT: the recorder thread is
+off by default (it crashed at launch), and the compressed sky cube gets no block views (its sky and water came out
+posterized). These fixes are **experimental**: they were checked on NVIDIA only, so they are not a guarantee that every
+AMD problem is solved.
 
 If you have an AMD card, a report is very welcome either way: open an
 [issue](https://github.com/Elie-0066/SPR-Recomp-Project/issues) with your GPU, driver version, how far the game got
