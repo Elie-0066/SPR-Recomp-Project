@@ -1098,16 +1098,24 @@ static int query_stamp(uint64_t lo, uint64_t hi, uint32_t g) {
 // - CPU -> shadow: right before each submit (vk_mem_shadow_sync), the pools the replay resolved since the last one are
 //   queried for written pages; pages stamped after a pool's sgen are copied in by the CPU.
 // - GPU -> guest: the replay notes each GPU write into CPU-visible memory at record time (vk_mem_gpu_pending) and
-//   reports it at the fence (vk_gpu_written), which copies those bytes back into guest memory. Until then the CPU
-//   copies skip them: a page the CPU and the GPU both write keeps the GPU's bytes.
+//   reports it at the fence (vk_gpu_written), which copies those bytes back into guest memory. From the submit that
+//   carries the write until then, the CPU copies skip them: a page the CPU and the GPU both write keeps the GPU's bytes.
+//   The sync of that submit itself still copies them (shadow_activate): the GPU has not run yet, and its commands read
+//   the CPU's bytes there. A written storage binding counts as written whole (vk_exec_draw.c ssbo_info), and Splatoon
+//   Raiders' tile compute shaders bind per-frame buffers of 80 to 250 KiB as written whose other bytes its CPU fills for
+//   the same frame. Those binds are recorded in nearly every submission, so skipping them at that sync too kept the
+//   CPU's per-frame data out of the shadow for a frame or more, and screen tiles of the tiled forward lighting lost
+//   their sunlight for a frame (translucent dark blocks flickering in every scene; gone with these ranges copied).
 // TOTK_SHADOW=1/0 forces the mode on or off; the default is on for Linux, off where importing is cheap (Windows, and
 // MoltenVK, which imports host memory without Linux's write-watch and page re-protection).
 typedef struct { uint64_t lo, hi; } SRange;
 static PlatMutex shadow_lock = PLAT_MUTEX_INIT;   // after pool_lock; before gen_lock
 static PoolRec **stouch;                          // shadow_lock: pools resolved since the last sync
 static int nstouch, cstouch;
-static SRange *spend;                             // shadow_lock: GPU writes recorded and not copied back yet
+static SRange *spend;                             // shadow_lock: GPU writes submitted and not copied back yet
 static int nspend, cspend;
+static SRange *snew;                              // shadow_lock: GPU writes recorded for the submission being recorded
+static int nsnew, csnew;
 static SRange *sblocked;                          // shadow_lock: sorted union of spend, rebuilt when it changes
 static int nsblocked, csblocked, spend_dirty;
 static int64_t s_live_n, s_live_bytes;            // shadow_lock
@@ -1241,12 +1249,24 @@ static void shadow_sync_pool(PoolRec *r) {
             continue;
         }
         for (uint64_t x = a; x < b; x += 1ull << GEN_PAGE_SHIFT) {
-            int dirty = ch[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)] > since;
+            // A page whose newest stamp is a write-back (gpu_gen, vk_gpu_written) holds the shadow's bytes in guest memory
+            // too: nothing to copy. A CPU write after it gets a newer stamp from the query above.
+            uint32_t st = ch[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)];
+            int dirty = st > since && gpu_gen[st & (GPU_GEN_N - 1)] != st;
             if (dirty && !run) run = x;
             else if (!dirty && run) shadow_copy(r, run, x), run = 0;
         }
     }
     if (run) shadow_copy(r, run, hi);
+}
+
+// shadow_lock held, after the sync of a submission: the GPU writes it recorded block the CPU copies from now on.
+static void shadow_activate(void) {
+    if (!nsnew) return;
+    while (cspend < nspend + nsnew) grow((void **)&spend, &cspend, sizeof *spend);
+    memcpy(spend + nspend, snew, (size_t)nsnew * sizeof *snew);
+    nspend += nsnew, nsnew = 0;
+    spend_dirty = 1;
 }
 
 void vk_mem_shadow_sync(void) {
@@ -1261,6 +1281,7 @@ void vk_mem_shadow_sync(void) {
         s_syncs += (uint64_t)nstouch;
         nstouch = 0;
     }
+    shadow_activate();
     s_ticks += qpc() - t0;
     plat_mutex_unlock(&shadow_lock);
 }
@@ -1268,25 +1289,38 @@ void vk_mem_shadow_sync(void) {
 void vk_mem_gpu_pending(uint64_t addr, uint64_t size) {
     if (!shadow_on || !size) return;
     plat_mutex_lock(&shadow_lock);
-    if (nspend == cspend) grow((void **)&spend, &cspend, sizeof *spend);
-    spend[nspend++] = (SRange){addr, addr + size};
-    spend_dirty = 1;
+    if (nsnew == csnew) grow((void **)&snew, &csnew, sizeof *snew);
+    snew[nsnew++] = (SRange){addr, addr + size};   // blocks from its submission's sync on (shadow_activate)
     plat_mutex_unlock(&shadow_lock);
 }
 
 void vk_gpu_written(uint64_t addr, uint64_t size) {
+    int wrote_back = 0;   // shadow storage: guest memory now equals the shadow over the range
     if (shadow_on && size) {
         plat_mutex_lock_shared(&pool_lock);
         const pidx_ent *e = pidx_find(&pool_index, addr, size);
         PoolRec *r = e ? e->buf : NULL;
         plat_mutex_lock(&shadow_lock);
         if (r && r->smap && addr >= r->import_lo && addr + size <= r->import_hi) {
+            // Only the pages that differ are stored: a written storage binding is its whole bound range, mostly bytes
+            // the shader did not write (53 MiB a frame in Splatoon Raiders), and every stored page sets its write-watch
+            // bit, so the next sync (shadow_activate) copied the whole range back into the shadow, 2.3 ms a frame.
             mem_thaw(addr, size);
-            memcpy((void *)(uintptr_t)addr, r->smap + (addr - r->import_lo), size);
-            s_wb_bytes += size;
+            const uint8_t *src = r->smap + (addr - r->import_lo);
+            uint8_t *dst = (uint8_t *)(uintptr_t)addr;
+            for (uint64_t o = 0; o < size;) {
+                uint64_t n = 4096 - ((addr + o) & 4095);
+                if (n > size - o) n = size - o;
+                if (memcmp(dst + o, src + o, n)) memcpy(dst + o, src + o, n), s_wb_bytes += n;
+                o += n;
+            }
+            wrote_back = 1;
         }
+        int found = 0;
         for (int i = 0; i < nspend; i++)
-            if (spend[i].lo == addr && spend[i].hi == addr + size) { spend[i] = spend[--nspend], spend_dirty = 1; break; }
+            if (spend[i].lo == addr && spend[i].hi == addr + size) { spend[i] = spend[--nspend], spend_dirty = 1, found = 1; break; }
+        for (int i = 0; !found && i < nsnew; i++)   // reported before its submission's sync (probes)
+            if (snew[i].lo == addr && snew[i].hi == addr + size) { snew[i] = snew[--nsnew]; break; }
         plat_mutex_unlock(&shadow_lock);
         plat_mutex_unlock_shared(&pool_lock);
     }
@@ -1312,7 +1346,7 @@ void vk_gpu_written(uint64_t addr, uint64_t size) {
     }
     plat_mutex_lock(&gen_lock);
     uint32_t g = ++gen_now, g_cpu = 0;
-    if (r) gpu_gen[g & (GPU_GEN_N - 1)] = g;
+    if (r || wrote_back) gpu_gen[g & (GPU_GEN_N - 1)] = g;
     for (uint64_t a = lo; a < hi; a += 1ull << GEN_PAGE_SHIFT) {
         if (r) {
             const uint32_t *cur = gen_slot(a, 0);
