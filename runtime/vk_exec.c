@@ -153,7 +153,11 @@ static int view_format(const tex_t *t, const view_t *v, int blocks, VkFormat *ou
 // levels at the logo) go to a stand-in: a 2D array of the blocks of one level in the view's format, one layer per
 // depth plane. It starts with the level's content, so a pass that writes part of a plane keeps the rest, and each pass
 // end copies the planes it drew into the level (a copy between a compressed and a size-compatible uncompressed format).
-typedef struct { VkImage bc, img; VmaAllocation alloc; VkFormat fmt; uint32_t level, w, h, d; } BcStandIn;
+// A 2D BC image without block views takes the same path, with one stand-in layer per array layer: AMD's Windows driver
+// (RX 9070 XT, driver 26.10.1, SPR issue #14) left a 400x240 BC5 target of Splatoon Raiders unrenderable, and the
+// cube-compatible BC images have no block views on AMD (vk_texture.c create_tex, TOTK_CUBE_BLOCK_VIEWS), so their
+// draws were left out.
+typedef struct { VkImage bc, img; VmaAllocation alloc; VkFormat fmt; uint32_t level, w, h, d; int is3d; } BcStandIn;
 #define BC_STANDINS 64   // one per level drawn: 6 volumes of up to 7 levels at the logo
 static BcStandIn bcs[BC_STANDINS];
 static int nbcs;
@@ -192,12 +196,13 @@ static int bc_standin(const VkTexImage *img, uint32_t level, VkFormat fmt, BcSta
         }
     plat_mutex_unlock(&bcs_lock);
     if (full) {
-        if (!warned++) rt_log("vk: more than %d 3D BC render targets: the others are left out", BC_STANDINS);
+        if (!warned++) rt_log("vk: more than %d BC render targets without block views: the others are left out", BC_STANDINS);
         return 0;
     }
     uint32_t lw = level_extent(img->width, level), lh = level_extent(img->height, level);
+    int is3d = img->type == VK_IMAGE_TYPE_3D;
     BcStandIn s = {img->image, VK_NULL_HANDLE, NULL, fmt, level, (lw + 3) / 4, (lh + 3) / 4,
-                   level_extent(img->depth, level)};
+                   is3d ? level_extent(img->depth, level) : img->layers, is3d};
     VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = fmt,
                             .extent = {s.w, s.h, 1}, .mipLevels = 1, .arrayLayers = s.d, .samples = VK_SAMPLE_COUNT_1_BIT,
                             .tiling = VK_IMAGE_TILING_OPTIMAL,
@@ -206,7 +211,7 @@ static int bc_standin(const VkTexImage *img, uint32_t level, VkFormat fmt, BcSta
                             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
     VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
     if (vmaCreateImage(vk_ctx()->vma, &ci, &ai, &s.img, &s.alloc, NULL) != VK_SUCCESS) {
-        if (!warned++) rt_log("vk: stand-in for a 3D BC render target could not be created: left out");
+        if (!warned++) rt_log("vk: stand-in for a BC render target could not be created: left out");
         return 0;
     }
     // In the upload batch, which goes to the queue before this part: GENERAL, then the texture's blocks.
@@ -214,9 +219,10 @@ static int bc_standin(const VkTexImage *img, uint32_t level, VkFormat fmt, BcSta
     image_barrier(cb, s.img, VK_IMAGE_LAYOUT_UNDEFINED, s.d);
     memory_barrier(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
                    VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
-    VkImageCopy rg = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1},
+    // texels of the compressed source; a 3D level's depth planes become layers, a 2D image's layers stay layers
+    VkImageCopy rg = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, is3d ? 1 : s.d},
                       .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, s.d},
-                      .extent = {lw, lh, s.d}};   // texels of the compressed source
+                      .extent = {lw, lh, is3d ? s.d : 1}};
     vkCmdCopyImage(cb, img->image, VK_IMAGE_LAYOUT_GENERAL, s.img, VK_IMAGE_LAYOUT_GENERAL, 1, &rg);
     memory_barrier(cb, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                    VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
@@ -224,8 +230,8 @@ static int bc_standin(const VkTexImage *img, uint32_t level, VkFormat fmt, BcSta
     plat_mutex_lock(&bcs_lock);
     bcs[nbcs++] = s;
     plat_mutex_unlock(&bcs_lock);
-    rt_log("vk: 3D BC render target %ux%ux%u level %u drawn through a %ux%u x %u stand-in (format %d)", img->width,
-           img->height, img->depth, level, s.w, s.h, s.d, (int)fmt);
+    rt_log("vk: %s BC render target %ux%ux%u level %u drawn through a %ux%u x %u stand-in (format %d)", is3d ? "3D" : "2D",
+           img->width, img->height, is3d ? img->depth : img->layers, level, s.w, s.h, s.d, (int)fmt);
     *out = s;
     return 1;
 }
@@ -248,10 +254,12 @@ static void bc_copy_back(VkExec *ex, const VkExecTarget *t) {
         if (bcs[i].img != t->image) continue;
         memory_barrier(ex->cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
                        VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        int is3d = bcs[i].is3d;   // the drawn layers are depth planes of a 3D level, or layers of a 2D image
         VkImageCopy rg = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, t->base_layer, t->layers},
-                          .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, bcs[i].level, 0, 1},
-                          .dstOffset = {0, 0, (int32_t)t->base_layer},
-                          .extent = {bcs[i].w, bcs[i].h, t->layers}};   // texels of the uncompressed source
+                          .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, bcs[i].level, is3d ? 0 : t->base_layer,
+                                             is3d ? 1 : t->layers},
+                          .dstOffset = {0, 0, is3d ? (int32_t)t->base_layer : 0},
+                          .extent = {bcs[i].w, bcs[i].h, is3d ? t->layers : 1}};   // texels of the uncompressed source
         vkCmdCopyImage(ex->cb, t->image, VK_IMAGE_LAYOUT_GENERAL, bcs[i].bc, VK_IMAGE_LAYOUT_GENERAL, 1, &rg);
         memory_barrier(ex->cb, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
@@ -261,11 +269,14 @@ static void bc_copy_back(VkExec *ex, const VkExecTarget *t) {
     plat_mutex_unlock(&bcs_lock);
 }
 
-// A draw into a 3D BC image without block views through an uncompressed view of its blocks: the target is the
+// A draw into a 3D or 2D BC image without block views through an uncompressed view of its blocks: the target is the
 // image's stand-in (bc_standin). 1 when o is filled (target or left out), 0 for any other target.
 static int bc_target(const tex_t *t, const view_t *v, int has_v, const VkTexImage *img, VkExecTarget *o) {
     int bw, bh;
-    if (img->type != VK_IMAGE_TYPE_3D || img->block_views || !nvn_fmt_bpb(t->d.format, &bw, &bh) || bw != 4 || bh != 4)
+    int is2d = img->type == VK_IMAGE_TYPE_2D;   // a 2D image that can be attached needs no stand-in
+    if ((img->type != VK_IMAGE_TYPE_3D && !is2d) || img->block_views ||
+        (is2d && (img->usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) || !nvn_fmt_bpb(t->d.format, &bw, &bh) || bw != 4 ||
+        bh != 4)
         return 0;
     VkFormat fmt;
     BcStandIn s;
