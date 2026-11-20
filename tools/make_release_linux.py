@@ -262,6 +262,10 @@ def placeholder_gen():
     (gen / 'layout.h').write_text('\n'.join(lines))
     (gen / 'patches.h').write_text('// Placeholder: no code patch sets.\n#pragma once\n\n#define RT_PATCH_COUNT 0\n'
                                    '#define RT_PATCH_PAGE 0x0ull\n#define RT_PATCH_SETS(X)\n')
+    for n, _, _ in mods:   # build_game.py chunk_files lists every module before --make-runtime-lib drops them
+        (gen / n).mkdir()
+        (gen / n / 'manifest.json').write_text(json.dumps({'module': n, 'chunks': []}) + '\n')
+        (gen / n / f'{n}_table.c').write_text('// Placeholder: not compiled by --make-runtime-lib.\n')
     return gen
 
 
