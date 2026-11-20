@@ -6,6 +6,16 @@
 > wins), `totk.ini` as `dkb.ini` and `totk.exe` as `spr-recomp.exe`. The "Action" column and the game-specific
 > examples (mouse camera, scripted input) describe TotK or Bananza; in Raiders the buttons do what the game assigns.
 
+## Aiming up and down in Splatoon Raiders
+
+If the right stick only turns the view left and right, the game's own **Motion Controls** option is on. With it on,
+*Splatoon Raiders*, like the other Splatoon games, aims up and down with the controller's gyro only. This happens on
+every controller: one without a gyro (an Xbox pad, or a multi-mode pad in its Xbox or XInput mode) cannot aim up or
+down at all, and one with a gyro aims vertically by tilting it. To aim with both stick axes, turn **Motion Controls**
+off in the game's options menu (the in-game settings, not the F1 menu). The F1 menu's motion setting (`motion = 0`)
+only stops sending gyro data: the game keeps its option, and the stick still turns only left and right.
+(SPR issues #2 and #23.)
+
 Input comes from the first SDL3 gamepad, the keyboard and the mouse, merged into one Switch controller (`runtime/input_win.c`). Buttons are ORed; each stick takes the source with the larger deflection. Keys and mouse buttons count only while the game window is in the foreground. `TOTK_INPUT=none` disables both (automated runs). `TOTK_*` settings can also be set in `totk.ini` next to `totk.exe` (`input = none`, `motion = 0`, `rumble = 0`); the environment overrides the file. `TOTK_RUMBLE_STRENGTH` is the rumble strength in percent (0 to 300, default 130; 0 is the same as `rumble = 0`). `TOTK_RUMBLE_CURVE` is the exponent applied to the amplitude before the strength (0.2 to 1.5, default 0.6; lower makes weak pulses stronger, 1 is linear). `TOTK_RUMBLE_TRIGGERS=1` also drives the impulse triggers of an Xbox pad.
 
 `TOTK_PAD_LAYOUT` (`pad_layout`, the *Button layout* row on the Controls tab, live) picks which face button is Switch A:
