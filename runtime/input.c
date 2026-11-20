@@ -880,12 +880,35 @@ static void motion_main(void *arg) {
         float a[3], g[3];
         int have = 0;
         plat_mutex_lock(&lock);
+        int16_t zl = 0;
         if (pad && SDL_GamepadConnected(pad)) {
             SDL_UpdateGamepads();
             have = sensors_ready() && SDL_GetGamepadSensorData(pad, SDL_SENSOR_ACCEL, a, 3) &&
                    SDL_GetGamepadSensorData(pad, SDL_SENSOR_GYRO, g, 3);
+            zl = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
         }
         plat_mutex_unlock(&lock);
+        {   // TOTK_INPUT_TRACE=1 (diagnostic): ZL threshold crossings and gaps of 20 ms or more in the gamepad's report
+            // stream (the gyro reading unchanged), as the trace that found rumble freezing a Flydigi pad's input
+            static int trace = -1, zl_on, same;
+            static float lg[3];
+            static uint64_t stall_t0;
+            if (trace < 0) trace = getenv("TOTK_INPUT_TRACE") && strcmp(getenv("TOTK_INPUT_TRACE"), "0");
+            if (trace) {
+                uint64_t now = kern_now_ns();
+                int on = zl > TRIGGER_ON;
+                if (on != zl_on) rt_log("trace: t%.3f ZL %s (axis %d)", now / 1e6, on ? "pressed" : "released", zl), zl_on = on;
+                if (have && g[0] == lg[0] && g[1] == lg[1] && g[2] == lg[2]) {
+                    if (!same++) stall_t0 = now;
+                } else {
+                    if (same >= 5)
+                        rt_log("trace: t%.3f reports stalled %.1f ms (ZL %s)", now / 1e6, (now - stall_t0) / 1e6 + 4,
+                               zl_on ? "held" : "up");
+                    same = 0;
+                }
+                if (have) lg[0] = g[0], lg[1] = g[1], lg[2] = g[2];
+            }
+        }
         if (!have || !input_motion_enabled()) continue;
         double acc[3], gyro[3];
         input_motion_axes(a, g, acc, gyro);
