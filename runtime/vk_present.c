@@ -113,12 +113,17 @@ static VkPresentModeKHR pick_present_mode(VkPhysicalDevice pd) {
     vkGetPhysicalDeviceSurfacePresentModesKHR(pd, g_surface, &n, m);
     VkPresentModeKHR got = VK_PRESENT_MODE_FIFO_KHR;
     for (uint32_t i = 0; i < n; i++) if (m[i] == want) got = want;
+    // Mailbox missing (AMD's drivers, as SPR issue #14's RX 9070 XT log shows): relaxed FIFO, where a frame that misses
+    // its vblank is shown at once (a tear) instead of waiting for the next one, which halves a 60 fps game running near
+    // its budget (a ROG Ally at 30 fps in issue #2). mkw-recomp does the same (gfx_present.c pick_present_mode, MIT).
+    for (uint32_t i = 0; got != want && want == VK_PRESENT_MODE_MAILBOX_KHR && i < n; i++)
+        if (m[i] == VK_PRESENT_MODE_FIFO_RELAXED_KHR) got = m[i];
     const char *name = got == VK_PRESENT_MODE_MAILBOX_KHR ? "mailbox" : got == VK_PRESENT_MODE_IMMEDIATE_KHR ? "immediate" : "fifo";
     __atomic_store_n(&g_present_got, name, __ATOMIC_RELEASE);
     static int logged = -1;   // the mode last logged: a change from the menu shows in the log
     if ((int)got != logged) {
         logged = (int)got;
-        rt_log("gfx: present mode %s (TOTK_VK_PRESENT=%s)", name, e);
+        rt_log("gfx: present mode %s%s (TOTK_VK_PRESENT=%s)", name, got == VK_PRESENT_MODE_FIFO_RELAXED_KHR ? " relaxed" : "", e);
     }
     return got;
 }

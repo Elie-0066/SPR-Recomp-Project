@@ -52,6 +52,19 @@ static uint64_t now_ns(void) { return plat_now_ns(); }
 
 static void exec_packet(uint32_t op, void *p);
 
+// The recorder's vkCmd* calls write command memory that drivers map write-combined (RADV, and likely AMD's Windows
+// driver), and x86 does not order write-combined stores with the ordinary store that publishes tail. The replay thread
+// could then see tail, end the command buffer and submit it while the last commands still sat in this CPU's
+// write-combining buffers, and the GPU ran stale packets: an "Illegal opcode" and a device loss. SFENCE first makes
+// every earlier store visible. The cause and the fix are mkw-recomp's (runtime/gfx/vk/device/vk_rec.c publish_tail,
+// MIT, measured on an RX 9070 XT with RADV); SPR issue #14 crashed at launch on an RX 9070 XT with the recorder on.
+static inline void publish_tail(uint64_t t) {
+#if defined(__x86_64__)
+    __builtin_ia32_sfence();
+#endif
+    __atomic_store_n(&tail, t, __ATOMIC_RELEASE);
+}
+
 static void rec_main(void *arg) {
     (void)arg;
     plat_thread_priority(rec_prio);
@@ -73,9 +86,9 @@ static void rec_main(void *arg) {
             uint32_t op = (uint32_t)(w & 0xffff), n = (uint32_t)(w >> 32);
             if (op != R_PAD) exec_packet(op, &ring[t % RING_WORDS + 1]);
             t += n;
-            if ((k & 63) == 63) __atomic_store_n(&tail, t, __ATOMIC_RELEASE);
+            if ((k & 63) == 63) publish_tail(t);
         }
-        __atomic_store_n(&tail, t, __ATOMIC_RELEASE);
+        publish_tail(t);
     }
     return;
 }
