@@ -1120,6 +1120,41 @@ static SRange *sblocked;                          // shadow_lock: sorted union o
 static int nsblocked, csblocked, spend_dirty;
 static int64_t s_live_n, s_live_bytes;            // shadow_lock
 static uint64_t s_syncs, s_copied, s_queries, s_untracked, s_wb_bytes, s_ticks;   // shadow_lock: since the last log
+static uint64_t s_wb_cmp;   // write-back: bytes compared (shadow_lock, since the last log)
+// Narrowed write-back. Splatoon Raiders' tile shaders bind a 53 MiB span (a storage binding of unknown size reaches the
+// end of its pool, vk_exec_draw.c ssbo_info) and write only its first ~1.6 MiB; comparing all of it against the shadow
+// cost 4.3 ms of the completion thread a frame (and two 53 MiB streams of memory bandwidth). A span of WB_NARROW_MIN or
+// more learns the end of the bytes that ever differed (hwm) and compares up to hwm plus a margin; every WB_FULL_EVERY-th
+// write-back of it compares all of it, and a difference found beyond the narrowed end raises hwm (logged). Bytes the
+// GPU wrote past it reach guest memory up to WB_FULL_EVERY - 1 write-backs late; the GPU itself reads the shadow and
+// sees them at once. DKB_WB_NARROW=0: compare every span whole, as before.
+#define WB_NARROW_MIN (8ull << 20)
+#define WB_FULL_EVERY 8
+#define WB_SPANS 16
+typedef struct { uint64_t addr, size, hwm, n; } WbSpan;
+static WbSpan wb_span[WB_SPANS];
+static int wb_narrow = -1, nwb_span;
+static volatile int64_t s_wb_grew;   // extent changes logged
+
+// shadow_lock held: how many bytes of [addr, addr+size) this write-back compares.
+static uint64_t wb_limit(uint64_t addr, uint64_t size, WbSpan **out) {
+    *out = NULL;
+    if (wb_narrow < 0) wb_narrow = !(getenv("DKB_WB_NARROW") && !strcmp(getenv("DKB_WB_NARROW"), "0"));
+    if (!wb_narrow || size < WB_NARROW_MIN) return size;
+    WbSpan *sp = NULL;
+    for (int i = 0; i < nwb_span; i++)
+        if (wb_span[i].addr == addr && wb_span[i].size == size) { sp = &wb_span[i]; break; }
+    if (!sp) {
+        int i = nwb_span < WB_SPANS ? nwb_span++ : (int)(addr >> 12) % WB_SPANS;   // full: replace one
+        wb_span[i] = (WbSpan){addr, size, 0, 0};
+        sp = &wb_span[i];
+    }
+    *out = sp;
+    if (sp->n++ % WB_FULL_EVERY == 0) return size;   // the first and every WB_FULL_EVERY-th: whole
+    uint64_t margin = sp->hwm / 2 > (256u << 10) ? sp->hwm / 2 : (256u << 10);
+    uint64_t lim = (sp->hwm + margin + 4095) & ~4095ull;
+    return lim < size ? lim : size;
+}
 
 static int shadow_pool(VkCtx *c, PoolRec *r, uint64_t addr, uint64_t size) {
     r->import_lo = addr & ~0xfffull;
@@ -1308,13 +1343,26 @@ void vk_gpu_written(uint64_t addr, uint64_t size) {
             mem_thaw(addr, size);
             const uint8_t *src = r->smap + (addr - r->import_lo);
             uint8_t *dst = (uint8_t *)(uintptr_t)addr;
-            for (uint64_t o = 0; o < size;) {
+            WbSpan *sp;
+            uint64_t lim = wb_limit(addr, size, &sp), last = 0;   // last: end of the last differing page
+            for (uint64_t o = 0; o < lim;) {
                 uint64_t n = 4096 - ((addr + o) & 4095);
-                if (n > size - o) n = size - o;
-                if (memcmp(dst + o, src + o, n)) memcpy(dst + o, src + o, n), s_wb_bytes += n;
+                if (n > lim - o) n = lim - o;
+                if (memcmp(dst + o, src + o, n)) {
+                    last = o + n;
+                    memcpy(dst + o, src + o, n), s_wb_bytes += n;
+                }
                 o += n;
             }
+            if (sp && last > sp->hwm) {
+                uint64_t was = sp->hwm;
+                sp->hwm = last;
+                if (plat_inc64(&s_wb_grew) <= 16)
+                    rt_log("mem: narrowed write-back of %#llx+%llu KiB: written extent %llu -> %llu KiB", (unsigned long long)addr,
+                           (unsigned long long)(size >> 10), (unsigned long long)(was >> 10), (unsigned long long)(last >> 10));
+            }
             wrote_back = 1;
+            s_wb_cmp += lim;
         }
         int found = 0;
         for (int i = 0; i < nspend; i++)
@@ -1365,11 +1413,11 @@ static void shadow_log(uint64_t frame) {
     if (!shadow_on) return;
     plat_mutex_lock(&shadow_lock);
     rt_log("mem: shadow at frame %llu: %lld pools %.1f MiB; since the last: %llu pool syncs, %llu queries, %.1f MiB "
-           "copied in (%llu untracked), %.1f MiB written back, %.2f ms, %d GPU writes pending",
+           "copied in (%llu untracked), %.1f MiB written back (%.1f MiB compared), %.2f ms, %d GPU writes pending",
            (unsigned long long)frame, (long long)s_live_n, s_live_bytes / 1048576.0, (unsigned long long)s_syncs,
-           (unsigned long long)s_queries, s_copied / 1048576.0, (unsigned long long)s_untracked, s_wb_bytes / 1048576.0,
+           (unsigned long long)s_queries, s_copied / 1048576.0, (unsigned long long)s_untracked, s_wb_bytes / 1048576.0, s_wb_cmp / 1048576.0,
            qpc_ms(s_ticks), nspend);
-    s_syncs = s_queries = s_copied = s_untracked = s_wb_bytes = s_ticks = 0;
+    s_syncs = s_queries = s_copied = s_untracked = s_wb_bytes = s_wb_cmp = s_ticks = 0;
     plat_mutex_unlock(&shadow_lock);
 }
 
