@@ -415,6 +415,8 @@ static void close_pad(const char *why) {
 // once per change. One controller can show up twice: a Flydigi Vader 5 Pro on its receiver is both SDL's Flydigi
 // driver (with motion) and the kernel's xpad device "Generic X-Box pad" (without), in either order. While the open
 // gamepad has no motion sensors, each rescan also opens the gamepads not tried yet and moves to one that has them.
+// With no gamepad open, the ones already found without sensors are candidates again: otherwise an Xbox pad tried while
+// a DualSense was open would never be taken once the DualSense goes away, and no gamepad would work.
 static void scan_pads(void) {
     if (pad && SDL_GamepadConnected(pad) && pad_motion) return;
     if (pad && !SDL_GamepadConnected(pad)) close_pad("disconnected");
@@ -423,12 +425,13 @@ static void scan_pads(void) {
     SDL_JoystickID cur = pad ? SDL_GetGamepadID(pad) : 0;
     SDL_Gamepad *fallback = NULL, *found = NULL;
     for (int i = 0; ids && i < n && !found; i++) {
-        if (ids[i] == cur || known_no_motion(ids[i])) continue;
+        int known = known_no_motion(ids[i]);
+        if (ids[i] == cur || (pad && known)) continue;
         SDL_Gamepad *g = SDL_OpenGamepad(ids[i]);
         if (!g) continue;
         if (has_motion(g)) found = g;
         else {
-            pad_no_motion[n_pad_no_motion++ % 16] = ids[i];
+            if (!known) pad_no_motion[n_pad_no_motion++ % 16] = ids[i];
             if (!pad && !fallback) fallback = g;
             else SDL_CloseGamepad(g);
         }
