@@ -187,6 +187,21 @@ def plain_outputs(ctx):
     plain_destination(ctx.dest, ctx.layout.dlls)
 
 
+def path_overlap(dest, temp, inputs):
+    """The InstallError for the first pair of the install folder, the setup's work folder and the game inputs where one
+    holds the other, or None. Each pair has its own message: the one message Bananza shares for all of them ("output
+    and source folders") did not say which folder to move. An install folder chosen as, or around, the folder the
+    setup was unpacked into holds the work folder (<release>/temp on Windows), which is what SPR issue #27 hit."""
+    if B.contains(dest, temp) or B.contains(temp, dest):
+        return InstallError('spr.dest_holds_setup', path=str(dest), other=str(temp))
+    for source in inputs:
+        if B.contains(dest, source) or B.contains(source, dest):
+            return InstallError('spr.dest_holds_source', path=str(dest), other=str(source))
+        if B.contains(temp, source) or B.contains(source, temp):
+            return InstallError('spr.setup_holds_source', path=str(temp), other=str(source))
+    return None
+
+
 def own_data(dest, old, options):
     """True when this run rebuilds from the ExeFS and RomFS an earlier .nup install left in the install folder: the
     folder records a .nup install and holds both, and either no game files are given while the recorded .nup is gone,
@@ -279,9 +294,9 @@ def preflight(layout, options, dest, temp, rep):
         romfs_dir = romfs
     if dest.exists() and not dest.is_dir():
         raise InstallError('spr.dest_unrelated', path=str(dest))
-    for a, b in ((dest, temp), *((out, source) for out in (dest, temp) for source in inputs)):
-        if B.contains(a, b) or B.contains(b, a):
-            raise InstallError('dkb.path_overlap', path=str(a), other=str(b))
+    overlap = path_overlap(dest, temp, inputs)
+    if overlap:
+        raise overlap
     if dest.exists() and old is None and any(dest.iterdir()):
         try:
             B.ensure_plain(dest / DEST_OWNER)
