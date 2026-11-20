@@ -1,11 +1,22 @@
 SPR Recomp: a static recompilation of *Splatoon Raiders* (Switch 2) to a native Windows and Linux executable with a Vulkan renderer. It is an experimental fork of DKB Recomp (itself built on TotK Recomp).
 
+## New in 0.2.0
+
+- **Linux version, new in this release.** `SPR-Setup-<version>-x86_64.AppImage` builds and runs the game on Linux and SteamOS. It is brand new and has not been played through from the package yet, so **please send your logs and open an issue for any problem**, even a small one, and also if it works: that is how the Linux version gets fixed. See *Reporting a bug* below for where the log is and how to get a more detailed one.
+- **AMD fixes, experimental.** None of them could be tested on an AMD GPU: they come from the logs AMD owners attached to issues #2 and #14 and from fixes other recompilations made for the same drivers. They may help, do nothing, or break something on AMD; NVIDIA and Intel take the same paths as before (except the recorder fence, which costs nothing there).
+  - Draws into compressed (BC) textures that AMD's driver cannot render into directly now go through an intermediate image instead of being dropped (the logs showed `render target format 0x4b ... not renderable here: left out`). This may fix the grey grid in the island select menu and other missing effects.
+  - When the driver has no mailbox present mode (AMD's), the game presents in relaxed FIFO: a frame that just misses the screen refresh is shown at once instead of waiting a whole refresh, which halved the frame rate near 60 fps (the ROG Ally running at 30 fps).
+  - The Vulkan recorder thread makes its commands visible to the GPU before handing them over (an SFENCE), the cause of a device loss on AMD that mkw-recomp found. The recorder stays off by default on AMD.
+- **Controllers:** when one controller shows up twice (a Flydigi Vader 5 Pro on its receiver), the one with motion sensors is used; rumble commands go out at most every 30 ms, which stopped those pads from freezing their input (thanks to azlekayn, PR #25 and #26).
+- **Aiming up and down:** if the right stick only turns left and right, turn off **Motion Controls** in the game's own options (not the F1 menu): with it on, the game aims vertically with the gyro only (issues #2 and #23).
+- **Setup:** when the install folder, the setup folder and your dump overlap, the setup now says which folder to move (issue #27).
+
 ## Downloads
 
 | File | System | How to start |
 |---|---|---|
 | `SPR-Setup-<version>-windows.zip` | **Windows** 10 or 11, x86-64 | Unpack into an empty folder and run `SPR-Setup.exe`. |
-| `SPR-Setup-<version>-x86_64.AppImage` | **Linux** and **SteamOS**, x86-64, glibc 2.34 or later | `chmod +x` it, then run it. **Experimental**: first Linux package, not yet played through. |
+| `SPR-Setup-<version>-x86_64.AppImage` | **Linux** and **SteamOS**, x86-64, glibc 2.34 or later | `chmod +x SPR-Setup-*.AppImage`, then `./SPR-Setup-*.AppImage`. When the setup is done, start the game from the install folder with `./spr-recomp --boot`. **Experimental**: new in 0.2.0. |
 
 Both hold the same setup, which builds the game on your machine; neither holds game data.
 
@@ -22,7 +33,7 @@ Both hold the same setup, which builds the game on your machine; neither holds g
 
 ## Requirements
 
-- A GPU with Vulkan 1.3 and a recent driver; tested on NVIDIA only. **AMD support is unknown**: no AMD GPU has been tested yet, and reports from AMD owners, working or not, are welcome.
+- A GPU with Vulkan 1.3 and a recent driver; tested on NVIDIA only. **AMD support is experimental**: no AMD GPU has been tested by the maintainer, every AMD fix so far is experimental, and reports from AMD owners, working or not, are welcome.
 - 16 GB of RAM plus a large page file (the process commits about 11 GB), 32 GB is comfortable.
 - About 6 GB free for the build, besides the dump.
 
@@ -30,4 +41,16 @@ On Linux the build needs the same RAM and disk space, and a Vulkan 1.3 driver (M
 
 ## Reporting a bug
 
-Open an issue on https://github.com/Elie-0066/SPR-Recomp-Project/issues with the log (`logs\dkb.log` next to `spr-recomp.exe`, `logs/dkb.log` next to `spr-recomp` on Linux), the commit you built, your GPU and driver, and what you did before it failed. **Never share generated files, keys, builds or screenshots that show game content.**
+Open an issue on https://github.com/Elie-0066/SPR-Recomp-Project/issues with the log, your GPU and driver, your system (Windows version, or Linux distribution and kernel), the SPR Recomp version and what you did before it failed. **Never share generated files, keys, builds or game files.**
+
+The log is `logs/dkb.log` in the install folder, next to `spr-recomp.exe` (Windows) or `spr-recomp` (Linux); the four runs before it are `dkb.1.log` to `dkb.4.log`. The setup's own log is in its work folder, shown at the end of the setup window.
+
+**A more detailed log.** For a slowdown, stutter or low frame rate, start the game with the performance trace on. It adds a line every 60 frames with the frame time, what held the frame back and the GPU time:
+
+- Windows (Command Prompt, in the install folder): `set TOTK_TRACE=perf` then `spr-recomp.exe --boot`
+- Windows (PowerShell, in the install folder): `$env:TOTK_TRACE="perf"; .\spr-recomp.exe --boot`
+- Linux (terminal, in the install folder): `TOTK_TRACE=perf ./spr-recomp --boot`
+
+AMD owners can help test the recorder fence: the recorder thread (which records the GPU commands on a second thread, faster) is off by default on AMD because it crashed at launch in 0.1.8. Start the game the same way with `TOTK_VK_RECORDER=1` instead of `TOTK_TRACE=perf`, and say in an issue whether it still crashes.
+
+Play until the problem shows, close the game, then attach `logs/dkb.log`.

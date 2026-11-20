@@ -79,8 +79,11 @@ Version 0.1.8 has an **experimental** fix for AMD: a textured array the game nev
 cube compatible, a combination AMD's Windows driver is known to sample wrongly (it matches the glitching sky texture
 reported on a ROG Ally). Version 0.1.9 adds two more for AMD, from a report on an RX 9070 XT: the recorder thread is
 off by default (it crashed at launch), and the compressed sky cube gets no block views (its sky and water came out
-posterized). These fixes are **experimental**: they were checked on NVIDIA only, so they are not a guarantee that every
-AMD problem is solved.
+posterized). Version 0.2.0 adds three, from the logs of issues #2 and #14 and from mkw-recomp's AMD fixes: draws into
+compressed textures AMD cannot render into go through an intermediate image instead of being dropped, the game
+presents in relaxed FIFO where AMD's driver has no mailbox mode (a frame that misses the refresh no longer halves the
+frame rate), and the recorder thread fences its commands before handing them over. All these fixes are
+**experimental**: they were checked on NVIDIA only, so they are not a guarantee that every AMD problem is solved.
 
 If you have an AMD card, a report is very welcome either way: open an
 [issue](https://github.com/Elie-0066/SPR-Recomp-Project/issues) with your GPU, driver version, how far the game got
