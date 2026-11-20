@@ -23,7 +23,7 @@ copy of the game, and the executable you build from it is for your own use only.
 
 ## Status
 
-**[Download the latest release](https://github.com/Elie-0066/SPR-Recomp-Project/releases/latest)** (Windows setup, no game data). **Early, playable in parts.** The title, the opening cutscene, the character creator, the hub and the first gameplay
+**[Download the latest release](https://github.com/Elie-0066/SPR-Recomp-Project/releases/latest)** (Windows zip and Linux AppImage, no game data). **Early, playable in parts.** The title, the opening cutscene, the character creator, the hub and the first gameplay
 zone render and play at about 60 fps on the test machine (Ryzen 5 4500, RTX 3050). Known open issue: the game's
 neural-network upscaler is stood in for by FSR 1 EASU.
 
@@ -58,7 +58,8 @@ Instructions for obtaining game files are not provided.
 
 ## Requirements
 
-- Windows 10 or 11 on an x86-64 CPU with AVX2. Linux and macOS are not supported.
+- Windows 10 or 11, or Linux (SteamOS included) with glibc 2.34 or later, on an x86-64 CPU with AVX2. Linux is
+  **experimental** (see [Linux](#linux)); macOS is not supported.
 - A GPU with Vulkan 1.3 and a current driver. Tested on NVIDIA only; see [AMD graphics cards](#amd-graphics-cards).
 - 16 GB of RAM plus a large page file (the process commits about 11 GB); 32 GB is comfortable.
 - About 6 GB free for the build, besides the dump.
@@ -91,6 +92,15 @@ Download `SPR-Setup-<version>-windows.zip` from the [latest release](https://git
 folder and run `SPR-Setup.exe`. It needs nothing else installed: the compiler, Python and the shader translator are in
 the zip. The first install recompiles the whole game on your PC and takes about 30 minutes on a 6-core CPU (lifting,
 then compiling about 280 MB of generated C, then preparing the shaders); later starts are immediate.
+
+### Linux
+
+Download `SPR-Setup-<version>-x86_64.AppImage` from the same release, make it executable and run it
+(`chmod +x SPR-Setup-*.AppImage`, then `./SPR-Setup-*.AppImage`). It opens the same setup window and carries its own
+compiler and Python, built against the Steam Runtime, so nothing needs installing, which matters on SteamOS's read-only
+system. The finished install folder holds `spr-recomp`; start it with `./spr-recomp --boot`. The Linux package is
+**experimental**: the runtime has been built and played from a checkout on Fedora with an AMD GPU, but the AppImage is
+new and has not been played through yet. Reports, working or not, are welcome.
 
 From a source checkout, the same setup runs with the repository's Python environment. It builds the game in one go from a `.nup` file or the extracted update folders, identifies the dump's version first
 (warning when it is not the tested update 65536), and leaves a ready folder with `spr-recomp.exe` ([docs/installer.md](docs/installer.md)):

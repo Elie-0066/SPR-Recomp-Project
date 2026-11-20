@@ -113,7 +113,8 @@ also hashes kept output. `--temp` selects a workspace base, kept apart from the 
 ## Release layout
 
 `tools/make_release.py --game raiders` assembles the release folder and `--zip` packs it as
-`SPR-Setup-<version>-windows.zip`; `.github/workflows/spr-release.yml` runs it, and publishes the zip on a `v*` tag.
+`SPR-Setup-<version>-windows.zip`; `.github/workflows/spr-release.yml` runs it, and publishes the zip on a `v*` tag
+with the Linux AppImage ("Linux release" below).
 
 ```
 SPR-Setup.exe         starts python/pythonw.exe -m installer.gui (installer/launcher/launcher.c, no console)
@@ -130,7 +131,36 @@ licenses/, THIRD_PARTY_NOTICES.md, dkb.ini.example, VERSION
 - Every bundled third-party piece gets a row in `THIRD_PARTY_NOTICES.md`.
 - The release contains nothing game-derived; `make_release.py` runs `tools/check_content.py` over the folder before it
   finishes, then the window's `--selftest` from the folder's own Python.
-- There is no Linux or macOS package: SPR Recomp has not been built on those systems.
+
+### Linux release
+
+`tools/make_release_linux.py` (default `--game raiders`) assembles the same setup for Linux and SteamOS, and a bare
+`--appimage` packs it as `SPR-Setup-<version>-x86_64.AppImage`. The `appimage` job of
+`.github/workflows/spr-release.yml` runs it on Ubuntu 24.04 under `xvfb-run` and publishes the AppImage beside the
+Windows zip. Everything that runs on the player's machine is built against the Steam Runtime 3 "sniper" SDK sysroot
+(glibc 2.31), so the AppImage and the game it builds run on SteamOS and on any distribution at least as new.
+
+```
+AppRun, spr-setup.desktop, spr-setup.png   python/bin/python3 -m installer.gui --game raiders
+installer/, recomp/, tools/                as in the Windows folder
+python/               python-build-standalone 3.14 with an Xft Tcl/Tk, and the installer's packages
+llvm/                 LLVM 23 clang and lld, and llvm/sysroot: the sniper files a game build reads
+runtime/              every runtime source and header, totk.png (the window icon) and deps/ (Vulkan headers, VMA, zstd)
+bin/                  totk_xlate, ninja, libSDL3.so.0 (the sysroot's; spr-recomp finds it beside itself)
+licenses/, THIRD_PARTY_NOTICES.md, LICENSE, LICENSE-MIT, dkb.ini.example, VERSION
+```
+
+- The sysroot is cut down to the files a runtime compile and link read. The script learns them by compiling the runtime
+  library once against a placeholder module layout (`placeholder_gen`), so it needs no game files and runs in CI.
+- The AppImage is mounted read-only, so the setup works next to the install folder, in `<dest>/../.spr-setup`
+  (`installer/raiders.py` main).
+- It carries no `recomplauncher.json`: RecompLauncher sets up the Windows zip.
+- The game needs a Vulkan 1.3 driver. Linux 6.7 or later gives it the write watch of `runtime/platform/linux.c`
+  (asynchronous userfaultfd write protection); on an older kernel it reports every watched range as written, which
+  costs speed. The first AppImage was built in CI and checked with the window's selftest only; it has not been
+  played from the package yet. The runtime itself has been built from a checkout and played on Fedora 44 with an
+  RX 7800 XT (RADV).
+- There is no macOS package.
 
 ## Constraints
 

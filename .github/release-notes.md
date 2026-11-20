@@ -1,4 +1,13 @@
-SPR Recomp: a static recompilation of *Splatoon Raiders* (Switch 2) to a native Windows exe with a Vulkan renderer. It is an experimental fork of DKB Recomp (itself built on TotK Recomp).
+SPR Recomp: a static recompilation of *Splatoon Raiders* (Switch 2) to a native Windows and Linux executable with a Vulkan renderer. It is an experimental fork of DKB Recomp (itself built on TotK Recomp).
+
+## Downloads
+
+| File | System | How to start |
+|---|---|---|
+| `SPR-Setup-<version>-windows.zip` | **Windows** 10 or 11, x86-64 | Unpack into an empty folder and run `SPR-Setup.exe`. |
+| `SPR-Setup-<version>-x86_64.AppImage` | **Linux** and **SteamOS**, x86-64, glibc 2.34 or later | `chmod +x` it, then run it. **Experimental**: first Linux package, not yet played through. |
+
+Both hold the same setup, which builds the game on your machine; neither holds game data.
 
 **A release would hold no game data.** You build the game on your own PC from your own dump, given as a `.nup` file or as an ExeFS folder and a complete RomFS folder.
 
@@ -11,12 +20,14 @@ SPR Recomp: a static recompilation of *Splatoon Raiders* (Switch 2) to a native 
 - Resolution (F1 menu, Graphics, after restart): 1080p, 1440p or 4K docked; handheld renders 1280x720 at 1080p and 1920x1080 above. The higher modes are the game's own and have not been played through whole missions yet.
 - The settings that act on Bananza patch sets (render scale, ultrawide, real-time frame timing) are hidden in the Raiders menu: the build has no patch sets.
 
-## Requirements (Windows)
+## Requirements
 
 - A GPU with Vulkan 1.3 and a recent driver; tested on NVIDIA only. **AMD support is unknown**: no AMD GPU has been tested yet, and reports from AMD owners, working or not, are welcome.
 - 16 GB of RAM plus a large page file (the process commits about 11 GB), 32 GB is comfortable.
 - About 6 GB free for the build, besides the dump.
 
+On Linux the build needs the same RAM and disk space, and a Vulkan 1.3 driver (Mesa RADV or NVIDIA's). Linux 6.7 or later is faster (write watch).
+
 ## Reporting a bug
 
-Open an issue on https://github.com/Elie-0066/SPR-Recomp-Project/issues with the log (`logs\dkb.log` next to `spr-recomp.exe`), the commit you built, your GPU and driver, and what you did before it failed. **Never share generated files, keys, builds or screenshots that show game content.**
+Open an issue on https://github.com/Elie-0066/SPR-Recomp-Project/issues with the log (`logs\dkb.log` next to `spr-recomp.exe`, `logs/dkb.log` next to `spr-recomp` on Linux), the commit you built, your GPU and driver, and what you did before it failed. **Never share generated files, keys, builds or screenshots that show game content.**

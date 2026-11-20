@@ -1,8 +1,16 @@
 """Assemble the Linux release folder of docs/installer.md ("Linux release") and pack it as an AppImage.
 
-    .venv/bin/python tools/make_release_linux.py --out build/release/TotK-Setup-linux \\
+    .venv/bin/python tools/make_release_linux.py [--out build/release/SPR-Setup-linux] [--appimage]
+    .venv/bin/python tools/make_release_linux.py --game totk --out build/release/TotK-Setup-linux \\
         [--appimage build/release/TotK-Setup-x86_64.AppImage]
-    .venv/bin/python tools/make_release_linux.py --out build/release/TotK-Setup-linux --prove
+    .venv/bin/python tools/make_release_linux.py --game totk --out build/release/TotK-Setup-linux --prove
+
+--game raiders (the default) packs SPR Recomp. Like the Windows folder of tools/make_release.py --game raiders, it
+carries every runtime source and the translator's inputs instead of libtotkrt.a and has no hactool, because
+installer/raiders.py compiles the whole runtime on the player's machine. It needs no game files: the runtime compile
+that records which sysroot files a build reads runs against a placeholder module layout (placeholder_gen). --out
+defaults to build/release/SPR-Setup-linux, and a bare --appimage writes SPR-Setup-<version>-x86_64.AppImage beside it.
+--prove does not apply. The TotK description below is otherwise the same.
 
 The same model as the Windows release (tools/make_release.py, whose download cache, unpacking and checks this reuses): the
 folder carries the setup and a toolchain, never game code; the player's machine builds the game. Everything that runs on
@@ -26,7 +34,8 @@ the generated C and links build/release-linux-check/totk with the folder's tools
 Like tools/make_release.py, both need one game version extracted and lifted first (generated/v121, else v143).
 
 The folder contains nothing derived from the game: check_content runs over it before the script finishes, then the
-folder's own python runs a check-only installer pass and the window's --selftest.
+folder's own python runs a check-only installer pass (TotK only) and the window's --selftest. The selftest opens a
+Tk window, so a machine without a display runs this script under xvfb-run.
 """
 import argparse
 import os
@@ -94,6 +103,13 @@ SNIPER_MEMBERS = ['usr/include', 'usr/share/pkgconfig', 'usr/lib/x86_64-linux-gn
 GLIBC_LIBS = ['c', 'm', 'mvec', 'dl', 'pthread', 'rt', 'util']
 GCC_LIBS = {'libgcc.a', 'libgcc_eh.a', 'libgcc_s.so', 'libstdc++.a', 'libsupc++.a'}
 # The libraries of a release link (build_game.py LINK_LIBS with --deps: Opus, libvpx and zstd static).
+# Per game: the folder and AppImage name, the desktop entry, the icon converted to the PNG Tk and the AppImage take,
+# and whether the setup compiles the whole runtime (no libtotkrt.a in the folder, as in make_release.py GAMES).
+GAMES = {'raiders': dict(name='SPR-Setup', title='SPR Recomp Setup', entry='spr-setup', icon='spr.ico',
+                         comment='Builds Splatoon Raiders for this PC from your own game files', source=True),
+         'totk': dict(name='TotK-Setup', title='TotK Recomp Setup', entry='totk-setup', icon='dkb.ico',
+                      comment='Builds Tears of the Kingdom for this PC from your own game files', source=False)}
+GAME = 'raiders'
 RELEASE_LIBS = ['-lvulkan', '-lSDL3', '-l:libopus.a', '-l:libvpx.a', '-l:libzstd.a', '-l:libstdc++.a', '-lm',
                 '-lpthread', '-ldl']
 
@@ -190,46 +206,103 @@ def build_bin(out, llvm, sysroot):
     zip_dir = mr.unpack('ninja-linux')
     shutil.copy2(zip_dir / 'ninja', b / 'ninja')
     (b / 'ninja').chmod(0o755)
-    hac = WORK / 'hactool-linux'
-    run([sys.executable, ROOT / 'tools' / 'build_hactool.py', '--src', WORK / 'hactool-src', '--out', hac,
-         '--cc', sysroot_cc(llvm, sysroot)])
-    shutil.copy2(hac / 'hactool', b / 'hactool')
+    if GAME == 'totk':   # the Raiders installer extracts a .nup with tools/extract_nup.py, not hactool
+        hac = WORK / 'hactool-linux'
+        run([sys.executable, ROOT / 'tools' / 'build_hactool.py', '--src', WORK / 'hactool-src', '--out', hac,
+             '--cc', sysroot_cc(llvm, sysroot)])
+        shutil.copy2(hac / 'hactool', b / 'hactool')
     xl = WORK / 'xlate-linux'
     run([sys.executable, ROOT / 'tools' / 'build_xlate.py', '--out', xl, '--llvm', llvm, '--sysroot', sysroot])
     shutil.copy2(xl / 'totk_xlate', b / 'totk_xlate')
     shutil.copy2(xl / 'totk_xlate.id', b / 'totk_xlate.id')
+    check_translator(b / 'totk_xlate')
     sdl = (sysroot / 'usr' / 'lib' / 'x86_64-linux-gnu' / 'libSDL3.so.0').resolve()
     shutil.copy2(sdl, b / 'libSDL3.so.0')
 
 
+def check_translator(exe):
+    """The staged translator's self-test, run from bin/ alone with a minimal PATH as on a player's machine: the Linux
+    counterpart of make_release.py check_translator (a translator that needs the build tree translates no shader, and
+    the game draws a black screen)."""
+    env = {'PATH': '/usr/bin:/bin', 'HOME': os.environ.get('HOME', '/tmp')}
+    try:
+        r = subprocess.run([str(exe), '--probe-nvn2-c0'], cwd=exe.parent, env=env, capture_output=True, text=True,
+                           timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        sys.exit(f'{exe}: the translator does not run on its own ({e})')
+    if r.returncode != 0 or 'passed' not in r.stdout:
+        sys.exit(f'{exe}: the translator does not run on its own (exit {r.returncode}: '
+                 f'{(r.stdout + r.stderr).strip()[:300]})')
+    print(f'translator self-test: {r.stdout.strip()}', flush=True)
+
+
 # ---- runtime/ ----------------------------------------------------------------------------------------------------------
 
+# Module names and bases for placeholder_gen, in recomp/layout.py's order for Raiders, each one page long. Only the
+# runtime library is compiled against them, to learn which sysroot files it reads; that library is not shipped.
+PLACEHOLDER_MODULES = [('main', 0x7000000000), ('subsdk0', 0x7005000000), ('sdk', 0x7005200000)]
+
+
+def placeholder_gen():
+    """A generated folder holding only what build_game.py --make-runtime-lib reads: layout.json and layout.h in the
+    formats of recomp/layout.py write, and a patches.h without patch sets. It holds no code. The Raiders release is
+    built without a lifted game, on a machine that may have none (CI)."""
+    import json
+    gen = CHECK / 'placeholder-gen'
+    shutil.rmtree(gen, ignore_errors=True)
+    gen.mkdir(parents=True)
+    mods = [(n, b, 0x1000) for n, b in PLACEHOLDER_MODULES]
+    (gen / 'layout.json').write_text(json.dumps(
+        [{'name': n, 'base': f'{b:#x}', 'size': f'{s:#x}'} for n, b, s in mods], indent=1) + '\n')
+    lines = ['// Placeholder module layout of tools/make_release_linux.py placeholder_gen.', '#pragma once', '']
+    for n, b, s in mods:
+        lines += [f'#define MOD_{n.upper()}_BASE {b:#x}ull', f'#define MOD_{n.upper()}_SIZE {s:#x}ull']
+    lines += ['', f'#define MOD_COUNT {len(mods)}',
+              '#define MOD_LIST(X) ' + ' '.join(f'X({n}, {n.upper()})' for n, _, _ in mods), '']
+    (gen / 'layout.h').write_text('\n'.join(lines))
+    (gen / 'patches.h').write_text('// Placeholder: no code patch sets.\n#pragma once\n\n#define RT_PATCH_COUNT 0\n'
+                                   '#define RT_PATCH_PAGE 0x0ull\n#define RT_PATCH_SETS(X)\n')
+    return gen
+
+
 def runtime_lib(out, llvm, sysroot):
+    """Compile the runtime library with the folder's tools; returns its build folder and the library. TotK ships the
+    library with the headers and the install-side sources. Raiders ships every runtime source instead (its setup
+    compiles them), and its library serves only used_sysroot_files."""
     build = CHECK / 'rtlib'
     shutil.rmtree(build, ignore_errors=True)
-    version = mr.lifted_version()
+    if GAMES[GAME]['source']:
+        version, gen = 'raiders', placeholder_gen()
+    else:
+        version = mr.lifted_version()
+        gen = MAIN_ROOT / 'generated' / version
     run([sys.executable, ROOT / 'tools' / 'build_game.py', '--make-runtime-lib', '--toolchain', llvm, '--sysroot', sysroot,
          '--deps', out / 'runtime' / 'deps', '--ninja', out / 'bin' / 'ninja', '--version', version,
-         '--gen', MAIN_ROOT / 'generated' / version, '--out', build])
+         '--gen', gen, '--out', build])
     rt = out / 'runtime'
-    shutil.copy2(build / 'libtotkrt.a', rt / 'libtotkrt.a')
-    for p in sorted((ROOT / 'runtime').rglob('*')):
-        if p.suffix in mr.RUNTIME_SUFFIXES and p.is_file():
-            (rt / p.relative_to(ROOT / 'runtime')).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(p, rt / p.relative_to(ROOT / 'runtime'))
-    for name in build_game.INSTALL_SIDE:
-        shutil.copy2(ROOT / 'runtime' / name, rt / name)
+    lib = build / 'libtotkrt.a'
+    if GAMES[GAME]['source']:
+        mr.runtime_lib(out, None)   # mr.GAME is raiders: every runtime source, copied beside deps/
+    else:
+        shutil.copy2(lib, rt / 'libtotkrt.a')
+        for p in sorted((ROOT / 'runtime').rglob('*')):
+            if p.suffix in mr.RUNTIME_SUFFIXES and p.is_file():
+                (rt / p.relative_to(ROOT / 'runtime')).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(p, rt / p.relative_to(ROOT / 'runtime'))
+        for name in build_game.INSTALL_SIDE:
+            shutil.copy2(ROOT / 'runtime' / name, rt / name)
     from PIL import Image   # Tk loads no .ico off Windows: the window and the AppImage take a PNG
-    with Image.open(ROOT / 'runtime' / 'dkb.ico') as ico:
+    with Image.open(ROOT / 'runtime' / GAMES[GAME]['icon']) as ico:
         ico.size = max(ico.ico.sizes())
-        ico.convert('RGBA').save(rt / 'totk.png')
-    return build
+        ico.convert('RGBA').save(rt / 'totk.png')   # the name installer/gui.py looks for
+    return build, lib
 
 
-def used_sysroot_files(out, llvm, sysroot, rtlib_build):
+def used_sysroot_files(out, llvm, sysroot, rtlib_build, rtlib):
     """The sysroot files a game build reads: the headers of the runtime's compile (its .d files), of the install-side
     sources and of hostcheck, and every library and object of a link (lld --trace) of the runtime library with the
-    flags and libraries build_game.py uses, its references to the generated code left unresolved."""
+    flags and libraries build_game.py uses, its references to the generated code left unresolved. Raiders' setup
+    compiles the same runtime sources with the same flags, so it reads the same headers."""
     used = set()
     for dep in rtlib_build.rglob('*.d'):
         used.update(re.findall(r'\S+', dep.read_text(encoding='utf-8', errors='replace').replace('\\\n', ' ')))
@@ -247,7 +320,7 @@ def used_sysroot_files(out, llvm, sysroot, rtlib_build):
             used.update(re.findall(r'\S+', (probe / f'{i}.d').read_text().replace('\\\n', ' ')))
     trace = subprocess.run([str(c) for c in [
         llvm / 'bin' / 'clang', '--target=x86_64-linux-gnu', f'--sysroot={sysroot}', *build_game.LINK_FLAGS[:3],
-        '-Wl,--trace', '-Wl,--unresolved-symbols=ignore-all', '-Wl,--whole-archive', out / 'runtime' / 'libtotkrt.a',
+        '-Wl,--trace', '-Wl,--unresolved-symbols=ignore-all', '-Wl,--whole-archive', rtlib,
         '-Wl,--no-whole-archive', '-L', out / 'runtime' / 'deps' / 'lib',
         *RELEASE_LIBS, '-o', probe / 'trace.out']],
         capture_output=True, text=True)
@@ -404,9 +477,10 @@ def collect_licenses(out, sysroot):
         (WORK / 'zstd' / 'LICENSE', 'zstd-LICENSE.txt'),
         (out / 'python' / 'lib' / f'python{sys_version(out)}' / 'LICENSE.txt', 'python-LICENSE.txt'),
         (ROOT / 'runtime' / 'shaders' / 'ffx' / 'LICENSE.txt', 'FidelityFX-FSR-LICENSE.txt'),
-        (WORK / 'hactool-linux' / 'LICENSE', 'hactool-LICENSE.txt'),
-        (MAIN_ROOT / 'refs' / 'MacNativeGames' / 'LICENSE', 'MacNativeGames-LICENSE.txt'),
     ]
+    if GAME == 'totk':   # as in make_release.py collect_licenses: the Raiders folder has no hactool or shader list
+        pairs += [(WORK / 'hactool-linux' / 'LICENSE', 'hactool-LICENSE.txt'),
+                  (MAIN_ROOT / 'refs' / 'MacNativeGames' / 'LICENSE', 'MacNativeGames-LICENSE.txt')]
     for src, name in pairs:
         shutil.copy2(src, lic / name)
     import tarfile   # Debian's libvpx copyright carries no patent grant: the WebM PATENTS text from the pinned source tag
@@ -426,26 +500,27 @@ HERE="$(dirname "$(readlink -f "$0")")"
 export PYTHONDONTWRITEBYTECODE=1
 export TCL_LIBRARY="$HERE/python/lib/tcl9.0"
 export TK_LIBRARY="$HERE/python/lib/tk9.0"
-exec "$HERE/python/bin/python3" -m installer.gui "$@"
+exec "$HERE/python/bin/python3" -m installer.gui --game {game} "$@"
 '''
 
 DESKTOP = '''[Desktop Entry]
 Type=Application
-Name=TotK Recomp Setup
-Comment=Builds Tears of the Kingdom for this PC from your own game files
+Name={title}
+Comment={comment}
 Exec=AppRun
-Icon=totk-setup
+Icon={entry}
 Categories=Game;
 Terminal=false
 '''
 
 
 def build_entry(out):
-    (out / 'AppRun').write_text(APPRUN, encoding='utf-8')
+    g = GAMES[GAME]
+    (out / 'AppRun').write_text(APPRUN.format(game=GAME), encoding='utf-8')
     (out / 'AppRun').chmod(0o755)
-    (out / 'totk-setup.desktop').write_text(DESKTOP, encoding='utf-8')
-    shutil.copy2(out / 'runtime' / 'totk.png', out / 'totk-setup.png')
-    (out / '.DirIcon').symlink_to('totk-setup.png')
+    (out / f'{g["entry"]}.desktop').write_text(DESKTOP.format(**g), encoding='utf-8')
+    shutil.copy2(out / 'runtime' / 'totk.png', out / f'{g["entry"]}.png')
+    (out / '.DirIcon').symlink_to(f'{g["entry"]}.png')
 
 
 def write_appimage(out, path):
@@ -496,6 +571,9 @@ def check_bundle(out):
     shutil.rmtree(chk, ignore_errors=True)
     py = out / 'python' / 'bin' / 'python3'
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
+    if GAMES[GAME]['source']:   # the no-input CLI pass is the TotK path; Raiders gets only the window selftest
+        selftest(out, py, env)
+        return
     r = subprocess.run([str(py), '-m', 'installer', '--lang', 'en-US', '--dest', str(chk / 'install'), '--temp',
                         str(chk / 'temp'), '--root', str(out)], cwd='/', env=env, capture_output=True, text=True,
                        timeout=600)
@@ -508,8 +586,12 @@ def check_bundle(out):
                  f'{r.stderr[-2000:]}')
     print(f'bundle check: the installer ran the host check from the folder and stopped at the game files '
           f'(exit {r.returncode})')
-    r = subprocess.run([str(py), '-m', 'installer.gui', '--selftest', '--root', str(out)], cwd='/', env=env,
-                       capture_output=True, text=True, timeout=300)
+    selftest(out, py, env)
+
+
+def selftest(out, py, env):
+    r = subprocess.run([str(py), '-m', 'installer.gui', '--selftest', '--game', GAME, '--root', str(out)], cwd='/',
+                       env=env, capture_output=True, text=True, timeout=300)
     if r.returncode:
         sys.exit(f'bundle check: window selftest exit {r.returncode}\n{r.stdout[-2000:]}\n{r.stderr[-2000:]}')
     print('bundle check: the window built every screen and closed')
@@ -550,12 +632,23 @@ def prove(out):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument('--out', type=Path, required=True, help='release folder (replaced)')
-    ap.add_argument('--appimage', type=Path, help='also pack the folder as this AppImage')
+    ap.add_argument('--game', choices=sorted(GAMES), default='raiders',
+                    help='raiders (default, SPR Recomp: the setup builds the runtime from source) or totk')
+    ap.add_argument('--out', type=Path, help='release folder (replaced); default build/release/<name>-linux')
+    ap.add_argument('--appimage', type=Path, nargs='?', const=True,
+                    help='also pack the folder as this AppImage; a bare --appimage means '
+                         '<name>-<version>-x86_64.AppImage beside the folder')
     ap.add_argument('--prove', action='store_true', help='only run the compile-and-probe check on an existing folder')
     args = ap.parse_args()
-    out = args.out.resolve()
+    global GAME
+    GAME = mr.GAME = args.game   # make_release.py's build_sources and runtime_lib follow it
+    name = GAMES[GAME]['name']
+    out = (args.out or MAIN_ROOT / 'build' / 'release' / f'{name}-linux').resolve()
+    if args.appimage is True:
+        args.appimage = out.parent / f'{name}-{mr.version()}-x86_64.AppImage'
     if args.prove:
+        if GAMES[GAME]['source']:
+            sys.exit(f'--prove needs libtotkrt.a, which the {GAME} folder does not carry (its setup compiles the runtime)')
         prove(out)
         return
     if out.exists():
@@ -565,10 +658,13 @@ def main():
     sysroot = full_sysroot()
     build_deps(out, llvm, sysroot)
     build_bin(out, llvm, sysroot)
-    rtlib = runtime_lib(out, llvm, sysroot)
-    build_sysroot(out, sysroot, used_sysroot_files(out, llvm, sysroot, rtlib))
+    rtlib_build, rtlib = runtime_lib(out, llvm, sysroot)
+    build_sysroot(out, sysroot, used_sysroot_files(out, llvm, sysroot, rtlib_build, rtlib))
     build_python(out, llvm, sysroot)
     mr.build_sources(out)
+    # recomplauncher.json names the Windows folder's python.exe and spr-recomp.exe: RecompLauncher sets the Windows
+    # zip up, not the AppImage
+    (out / 'recomplauncher.json').unlink(missing_ok=True)
     collect_licenses(out, sysroot)
     build_entry(out)
     mr.check_folder(out)

@@ -96,8 +96,11 @@ The current state of the game is in [raiders-plan.md](raiders-plan.md).
 ## Other systems
 
 The runtime has Linux and macOS ports inherited from TotK Recomp and DKB Recomp (`runtime/platform/linux.c`,
-`runtime/platform/darwin.c`, the SDL3 window and input files `*_sdl.c`). SPR Recomp has not been built or run on
-either. Their build steps and their known limits are documented in the upstream projects.
+`runtime/platform/darwin.c`, the SDL3 window and input files `*_sdl.c`). On Linux, SPR Recomp has been built from a
+checkout and played on Fedora 44 with an RX 7800 XT (RADV): clang, lld, ninja and the system's SDL3, Opus, libvpx,
+zstd and Vulkan packages, then the same `recomp/gen.py` and `tools/build_game.py --version raiders` steps as above
+(the executable is `build/raiders/spr-recomp`). Players get the AppImage of [installer.md](installer.md) ("Linux
+release"), which carries its own toolchain. macOS has not been tried.
 
 ## Checks
 
