@@ -521,30 +521,43 @@ static void list_gpus(VkInstance inst) {
     g_gpu_n = (int)n;
 }
 
-// Window sizes: the common 16:9 sizes that fit the monitor, the 1920x1080 default and the current size.
+// Window sizes: the common 16:9 sizes that fit the monitor, the 1920x1080 default, the common 21:9 and 32:9 monitor
+// sizes that fit it, the monitor's own size and the current size, in order of area. An ultrawide screen's size was
+// missing from the list, so 3440x1440 or 3840x1600 could not be picked as a window (issue #13).
 static const int kSizes[][2] = {{1280, 720}, {1366, 768}, {1600, 900}, {1920, 1080}, {2560, 1440}, {3200, 1800},
                                 {3840, 2160}};
-enum { MAX_SIZES = sizeof kSizes / sizeof *kSizes + 1 };
+static const int kWideSizes[][2] = {{2560, 1080}, {3440, 1440}, {3840, 1600}, {5120, 2160}, {3840, 1080},
+                                    {5120, 1440}};
+enum { MAX_SIZES = sizeof kSizes / sizeof *kSizes + sizeof kWideSizes / sizeof *kWideSizes + 2 };
+
+// Puts w x h into sz (n entries, sorted by area) unless it is there already.
+static void size_insert(int (*sz)[2], int *n, int w, int h) {
+    for (int i = 0; i < *n; i++)
+        if (sz[i][0] == w && sz[i][1] == h) return;
+    int at = *n;
+    while (at > 0 && ((long)sz[at - 1][0] * sz[at - 1][1] > (long)w * h ||
+                      ((long)sz[at - 1][0] * sz[at - 1][1] == (long)w * h && sz[at - 1][0] > w)))
+        at--;
+    memmove(sz[at + 1], sz[at], sizeof sz[0] * (*n - at));
+    sz[at][0] = w, sz[at][1] = h, (*n)++;
+}
 
 static void row_window_size(void) {
     if (gfx_cfg_fullscreen()) opt_disable_next(UI_MENU_WINDOWED_ONLY);
     int sz[MAX_SIZES][2], n = 0, mw = 0, mh = 0, cw = 0, ch = 0;
     int have = gfx_window_monitor_size(&mw, &mh);
     int cur_ok = sscanf(cfg_value("TOTK_WINDOW_SIZE"), "%dx%d", &cw, &ch) == 2;
-    bool listed = false;
     for (size_t i = 0; i < sizeof kSizes / sizeof *kSizes; i++) {
         int w = kSizes[i][0], h = kSizes[i][1];
-        bool cur = cur_ok && w == cw && h == ch;
-        if (have && (w > mw || h > mh) && !cur && !(w == 1920 && h == 1080)) continue;
-        listed |= cur;
-        sz[n][0] = w, sz[n][1] = h, n++;
+        if (have && (w > mw || h > mh) && !(w == 1920 && h == 1080)) continue;
+        size_insert(sz, &n, w, h);
     }
-    if (cur_ok && !listed) {   // the current size where its area puts it
-        int at = n;
-        while (at > 0 && (long)sz[at - 1][0] * sz[at - 1][1] > (long)cw * ch) at--;
-        memmove(sz[at + 1], sz[at], sizeof sz[0] * (n - at));
-        sz[at][0] = cw, sz[at][1] = ch, n++;
+    if (have) {   // wide sizes only where the monitor holds them: a 16:9 screen gets no wider list than before
+        for (size_t i = 0; i < sizeof kWideSizes / sizeof *kWideSizes; i++)
+            if (kWideSizes[i][0] <= mw && kWideSizes[i][1] <= mh) size_insert(sz, &n, kWideSizes[i][0], kWideSizes[i][1]);
+        if (mw >= 640 && mh >= 360 && mw <= 7680 && mh <= 4320) size_insert(sz, &n, mw, mh);   // gfx_window.c's bounds
     }
+    if (cur_ok) size_insert(sz, &n, cw, ch);
     char vals[MAX_SIZES][24], shown[MAX_SIZES][32];
     const char *pv[MAX_SIZES], *pn[MAX_SIZES];
     for (int i = 0; i < n; i++) {
