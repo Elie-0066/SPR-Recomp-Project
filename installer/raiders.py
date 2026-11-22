@@ -8,9 +8,10 @@ reuses. What differs for this game:
   tools/data/expected-raiders-*.json, and any other version whose main.npdm (or .nup package) carries the game's
   program id, are built too, with the warning warn.spr_version_experimental: nothing says the lifter or the runtime
   handles them. The executable is pinned to the ExeFS it was built from either way.
-- The runtime reads the RomFS as a loose folder (tools/romfs_index.py indexes it in place), so nothing is packed. A
-  RomFS folder is used where it is and recorded in the executable; a .nup is extracted loose into <dest>/romfs, the
-  base RomFS with the update's laid over it as Eglantine runs it (tools/extract_nup.py --select latest).
+- The runtime reads the RomFS as a loose folder (tools/romfs_index.py indexes it in place), so nothing is packed. The
+  install folder holds its own <dest>/romfs either way, so it runs once the dump is gone (SPR issue #32): a RomFS
+  folder is hard-linked there (copied across disks), a .nup is extracted loose there, the base RomFS with the update's
+  laid over it as Eglantine runs it (tools/extract_nup.py --select latest).
 - The shader census is tools/shader_census.py, which reads the loose RomFS and the ExeFS.
 - The executable is spr-recomp.exe and the install is recorded in spr-install.json.
 
@@ -132,6 +133,33 @@ def romfs_listing(root):
     return [(p.relative_to(root).as_posix(), p.stat().st_size) for p in files]
 
 
+def same_device(a, b):
+    """True when a and b (or the nearest existing folder above b) are on one file system, where a hard link can join
+    them."""
+    b = next((p for p in (b, *b.parents) if p.exists()), None)
+    try:
+        return b is not None and a.stat().st_dev == b.stat().st_dev
+    except OSError:
+        return False
+
+
+def link_or_copy_tree(src, dst):
+    """Every file of tree_files(src) into dst at the same relative path: a hard link where the file system allows one,
+    else a copy. A hard link is a second name of the same data, so the install keeps its RomFS when the dump is deleted,
+    and on one disk the gigabytes of game data are not written twice."""
+    link = True
+    for p in B.tree_files(src):
+        target = dst / p.relative_to(src)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if link:
+            try:
+                os.link(p, target)
+                continue
+            except OSError:
+                link = False   # another disk, or a file system without hard links: copy the rest
+        shutil.copyfile(p, target)
+
+
 def romfs_ok(root):
     """A loose RomFS of this game: its shader packages are where the census reads them."""
     return (root / 'Shader').is_dir()
@@ -208,7 +236,7 @@ def own_data(dest, old, options):
     or the folders given are those two. Without this an update asked for the .nup again, and choosing the install's own
     folders failed because they sit inside the output folder (SPR issue #17)."""
     recorded = (old or {}).get('sources') or {}
-    if not recorded.get('nup') and not recorded.get('installed'):
+    if not recorded.get('nup') and not recorded.get('installed') and not recorded.get('romfs'):
         return False
     exefs, romfs = dest / 'exefs', dest / 'romfs'
     if not (exefs / 'main').is_file() or not romfs_ok(romfs):
@@ -216,7 +244,11 @@ def own_data(dest, old, options):
     if getattr(options, 'nup', None):
         return False
     if not options.exefs and not options.romfs:
-        return not recorded.get('nup') or not Path(recorded['nup']).is_file()
+        if recorded.get('nup'):
+            return not Path(recorded['nup']).is_file()
+        if recorded.get('romfs'):   # a folder install, whose RomFS the install folder holds since SPR issue #32
+            return not Path(recorded['romfs']).is_dir() or not Path(recorded.get('exefs') or '').is_dir()
+        return True
     same = lambda given, own: given is not None and Path(given).resolve() == own.resolve()
     return same(options.exefs, exefs) and same(options.romfs, romfs)
 
@@ -289,9 +321,12 @@ def preflight(layout, options, dest, temp, rep):
         if game != program_id(layout):
             raise InstallError('spr.wrong_game', path=str(exefs / 'main.npdm'))
         version = identify(layout, hashes)
-        listing, romfs_size = romfs_listing(romfs), 0   # read in place: no copy on the install disk
+        # The RomFS goes into <dest>/romfs, so the install folder runs on its own once the dump is moved or deleted
+        # (SPR issue #32). On the dump's disk the files are hard links and take no space; elsewhere they are copies.
+        listing = romfs_listing(romfs)
+        romfs_size = 0 if same_device(romfs, dest) else sum(size for _, size in listing)
         inputs, sources = (exefs, romfs), {'exefs': str(exefs), 'romfs': str(romfs)}
-        romfs_dir = romfs
+        romfs_dir = dest / 'romfs'
     if dest.exists() and not dest.is_dir():
         raise InstallError('spr.dest_unrelated', path=str(dest))
     overlap = path_overlap(dest, temp, inputs)
@@ -353,7 +388,7 @@ def preflight(layout, options, dest, temp, rep):
         proc = B.subprocess.run([str(dotnet), '--list-sdks'], capture_output=True, text=True) if dotnet.is_file() else None
         if proc is None or proc.returncode or not any(line.startswith('10.') for line in proc.stdout.splitlines()):
             raise InstallError('dkb.dotnet_missing')
-    # Check (B.Check) sizes the space from romfs_size: a .nup's RomFS is written to the install folder, a folder's is not.
+    # Check (B.Check) sizes the space from romfs_size: the RomFS written to the install folder (none for hard links).
     return dict(old=old, game=GAME, sources=sources, version=version, hashes=version['exefs_sha256'], romfs_id=B.digest(listing), romfs_size=romfs_size,
                 romfs_files=len(listing), romfs_dir=str(romfs_dir), owner=owner, translator=translator,
                 identity=identity, dotnet=dotnet,
@@ -454,13 +489,30 @@ class Data(Step):
             exefs = part / 'exefs'
         else:
             exefs = Path(sources['exefs'])
-            romfs = Path(sources['romfs'])
-            if B.digest(romfs_listing(romfs)) != ctx.info['romfs_id']:
-                raise InstallError('dkb.input_changed', path=str(romfs))
+            source = Path(sources['romfs'])
+            if B.digest(romfs_listing(source)) != ctx.info['romfs_id']:
+                raise InstallError('dkb.input_changed', path=str(source))
+            # Linked or copied into the install folder (SPR issue #32) through the same part folder a .nup uses, so an
+            # interrupted copy never leaves a partial <dest>/romfs that a later run would take as complete
+            part = ctx.dest / NUP_PART
+            B.ensure_plain(part)
+            if part.exists():
+                B.plain_tree(part)
+                shutil.rmtree(part)
+            ctx.reporter.progress(self.id, 'dkb_run', force=True)
+            link_or_copy_tree(source, part / 'romfs')
+            if B.digest(romfs_listing(part / 'romfs')) != ctx.info['romfs_id']:
+                raise InstallError('dkb.input_changed', path=str(source))
+            romfs = ctx.dest / 'romfs'
+            B.ensure_plain(romfs)
+            if romfs.exists():
+                B.plain_tree(romfs)
+                shutil.rmtree(romfs)
+            os.replace(part / 'romfs', romfs)
         for name in ctx.info['hashes']:
             B.copy_file(exefs / name, ctx.dest / 'exefs' / name)
         check_exefs(ctx.dest / 'exefs', ctx.info['hashes'])
-        if 'nup' in sources:
+        if (ctx.dest / NUP_PART).exists():
             shutil.rmtree(ctx.dest / NUP_PART)
         return {'romfs_files': ctx.info['romfs_files']}
 

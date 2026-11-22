@@ -47,16 +47,16 @@ program), or setup stops with `dkb.nup_zstd`.
 
 1. **Check.** Identify the version (above), list the RomFS, reject overlapping or linked input and output paths,
    validate the tool paths and the translator identity, then check disk space, AVX2 and Vulkan 1.3. Space: about 3 GB
-   in the install folder plus the RomFS of a `.nup` (13 GB), and 6 GB of work space.
-2. **Data.** Copy the ExeFS into `<dest>/exefs`. A RomFS folder is used where it is: the executable records its path,
-   so it must stay there (setup lists its files, without hashing them). A `.nup` is extracted loose into `<dest>/romfs`
+   in the install folder plus the RomFS (13 GB) when it is written there, and 6 GB of work space.
+2. **Data.** Copy the ExeFS into `<dest>/exefs`. A RomFS folder is hard-linked into `<dest>/romfs` (copied when the
+   install folder is on another disk), so the install runs on its own once the dump is moved or deleted (setup lists
+   its files, without hashing them). A `.nup` is extracted loose into `<dest>/romfs`
    with `tools/extract_nup.py --select latest` (or `base`; every file checked against its SHA-256 record), inside the
    install folder so the 13 GB tree is renamed into place, not copied.
 3. **Translator.** Reuse `build/xlate/totk_xlate.exe` (or `--translator`) when its `.id` matches the translator
    sources, else build it with `tools/build_xlate.py` and the .NET 10 SDK (`--dotnet` selects a portable SDK).
 4. **Lift.** `recomp/gen.py` lifts all three modules (`main`, `sdk`, `subsdk0`) without patch sets.
-5. **Compile.** `tools/build_game.py --version raiders --full-build` links `spr-recomp.exe` against the recorded RomFS
-   folder and writes `romfs-index.bin` (`tools/romfs_index.py`).
+5. **Compile.** `tools/build_game.py --version raiders --full-build` links `spr-recomp.exe` against `<dest>/romfs` and writes `romfs-index.bin` (`tools/romfs_index.py`).
 6. **Shaders.** `tools/shader_census.py --out <work> --seed <dest>/seed-nvn2.bin` lists the NVN 2 stages, then
    `spr-recomp.exe --translate-shaders` fills the shader cache and `--warm-shaders` builds the driver's pipeline
    libraries. If the latter crashes (seen on NVIDIA 621.01) setup warns and goes on.
@@ -64,7 +64,7 @@ program), or setup stops with `dkb.nup_zstd`.
 8. **Cleanup.** Remove the owned work folders. The generated C and the objects stay, so a newer runtime recompiles
    only the runtime. Setup does not start the game.
 
-The install folder holds `spr-recomp.exe`, its runtime DLLs, `exefs/`, `romfs/` (for a `.nup`), `romfs-index.bin`,
+The install folder holds `spr-recomp.exe`, its runtime DLLs, `exefs/`, `romfs/`, `romfs-index.bin`,
 `seed-nvn2.bin`, `dkb.ini`, `spr-install.json` and `shader-cache/`. Saves and further caches are created beside the
 executable when it runs.
 

@@ -43,5 +43,41 @@ class PathOverlap(unittest.TestCase):
             self.assertIn('{other}', catalog[key])
 
 
+class OwnRomfs(unittest.TestCase):
+    """A RomFS folder lands in the install folder, which then runs without the dump (SPR issue #32)."""
+
+    def test_tree_linked_or_copied(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst = Path(tmp) / 'dump' / 'romfs', Path(tmp) / 'SPR' / '.setup-nup' / 'romfs'
+            (src / 'Shader').mkdir(parents=True)
+            (src / 'Shader' / 'a.bin').write_bytes(b'shader')
+            (src / 'Pack.zs').write_bytes(b'pack')
+            R.link_or_copy_tree(src, dst)
+            self.assertEqual(R.romfs_listing(dst), R.romfs_listing(src))
+            self.assertTrue(R.romfs_ok(dst))
+            self.assertTrue(R.same_device(src, Path(tmp) / 'SPR' / 'not-yet'))
+            for p in src.rglob('*'):   # the install keeps its RomFS when the dump goes
+                if p.is_file():
+                    p.unlink()
+            self.assertEqual((dst / 'Shader' / 'a.bin').read_bytes(), b'shader')
+
+    def test_update_uses_own_romfs_when_dump_is_gone(self):
+        import tempfile
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / 'SPR'
+            (dest / 'exefs').mkdir(parents=True)
+            (dest / 'exefs' / 'main').write_bytes(b'')
+            (dest / 'romfs' / 'Shader').mkdir(parents=True)
+            dump = Path(tmp) / 'dump'
+            old = {'sources': {'exefs': str(dump / 'exefs'), 'romfs': str(dump / 'romfs')}}
+            none = SimpleNamespace(exefs=None, romfs=None, nup=None)
+            self.assertTrue(R.own_data(dest, old, none))
+            (dump / 'exefs').mkdir(parents=True)
+            (dump / 'romfs').mkdir(parents=True)
+            self.assertFalse(R.own_data(dest, old, none))   # the dump is still there: rebuild from it
+
+
 if __name__ == '__main__':
     unittest.main()

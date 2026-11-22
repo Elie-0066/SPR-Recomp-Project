@@ -336,7 +336,12 @@ def used_sysroot_files(out, llvm, sysroot, rtlib_build, rtlib):
     for p in used:
         path = Path(p)
         if not path.is_absolute():
-            continue
+            # build_game.py names the sysroot relative to the repository (flag_path) and runs Ninja from there, so the
+            # runtime's .d files list toolchain/release-work/sniper/usr/include/... relative paths. Skipping them left
+            # SDL3's, Opus's and libvpx's headers out of the shipped sysroot (SPR issue #31).
+            path = build_game.ROOT / path
+            if not path.exists():
+                path = MAIN_ROOT / Path(p)
         for q in (path, path.resolve()):   # the name read and, through symlinks, the file
             if str(q).startswith(root + '/') and q.exists():
                 files.add(q)
@@ -360,6 +365,12 @@ def used_sysroot_files(out, llvm, sysroot, rtlib_build, rtlib):
     files.update((sysroot / 'lib' / 'x86_64-linux-gnu').glob('libgcc_s.so*'))
     gcc = next((sysroot / 'usr' / 'lib' / 'gcc' / 'x86_64-linux-gnu').iterdir())
     files.update(p for p in gcc.iterdir() if p.name.startswith('crt') or p.name in GCC_LIBS)
+    # The headers the runtime takes from the sysroot rather than deps/: a missing one stops the player's compile at
+    # the first source that includes it, so the release build stops here instead
+    for header in ('SDL3/SDL.h', 'opus/opus.h', 'vpx/vpx_decoder.h', 'stdio.h'):
+        if inc / header not in files:
+            sys.exit(f'sysroot: {header} is not among the files the runtime compile read; the shipped sysroot '
+                     f'would not build the game')
     return files
 
 

@@ -505,6 +505,10 @@ class Check(Step):
         command = [ctx.layout.clang, '-O1', ctx.layout.root / 'installer' / 'hostcheck.c', '-o', exe]
         if ctx.layout.deps:
             command += ['-I', ctx.layout.deps / 'include']
+        if ctx.layout.sysroot:
+            # The Linux release compiles against its own llvm/sysroot: SteamOS and other hosts without glibc's
+            # development headers have no stdio.h of their own (SPR issue #30), as installer/steps.py Check.host does
+            command += ['--target=x86_64-linux-gnu',f'--sysroot={ctx.layout.sysroot}', '-fuse-ld=lld']
         if os.name != 'nt':
             command += ['-ldl']
         run_tool(ctx, self.id, command)
