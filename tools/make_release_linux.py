@@ -308,7 +308,15 @@ def used_sysroot_files(out, llvm, sysroot, rtlib_build, rtlib):
     flags and libraries build_game.py uses, its references to the generated code left unresolved. Raiders' setup
     compiles the same runtime sources with the same flags, so it reads the same headers."""
     used = set()
-    for dep in rtlib_build.rglob('*.d'):
+    # The runtime's headers come from Ninja's deps log: its rules are deps = gcc, so Ninja reads each .d file into
+    # .ninja_deps and deletes it, and globbing *.d found none (SPR issue #31: SDL3/SDL.h missing). build_game.py runs
+    # Ninja from the repository root, so the log is read from there too.
+    deps = subprocess.run([str(out / 'bin' / 'ninja'), '-f', str(rtlib_build / 'build.ninja'), '-t', 'deps'],
+                          cwd=build_game.ROOT, capture_output=True, text=True)
+    if deps.returncode:
+        sys.exit(f'ninja -t deps failed for {rtlib_build}:\n{deps.stderr[-2000:]}')
+    used.update(line.strip() for line in deps.stdout.splitlines() if line.startswith((' ', '\t')) and line.strip())
+    for dep in rtlib_build.rglob('*.d'):   # any depfile Ninja left in place
         used.update(re.findall(r'\S+', dep.read_text(encoding='utf-8', errors='replace').replace('\\\n', ' ')))
     probe = CHECK / 'sysroot-probe'
     shutil.rmtree(probe, ignore_errors=True)
