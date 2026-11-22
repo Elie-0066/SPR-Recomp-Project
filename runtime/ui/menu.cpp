@@ -858,7 +858,9 @@ static void tab_controls(float scale) {
     opt_choice("TOTK_ADAPTIVE_TRIGGERS", UI_MENU_ADAPTIVE_TRIGGERS, adaptive, 3, UI_MENU_ADAPTIVE_TRIGGERS_DESC);
     opt_slider("TOTK_STICK_DEADZONE", UI_MENU_STICK_DEADZONE, 0, 50, UI_MENU_STICK_DEADZONE_DESC, 1, "%.0f %%");
     if (!rt_game_version && !raiders()) opt_toggle("TOTK_MOUSE_CAMERA", UI_MENU_MOUSE_CAMERA, UI_MENU_MOUSE_CAMERA_DESC);
-    if (!raiders()) opt_slider("TOTK_MOUSE_SENS", UI_MENU_MOUSE_SENS, 0, 10, UI_MENU_MOUSE_SENS_DESC, 0.1f, "%.1f");
+    bool raw_orbit = input_raiders_available();
+    if (raw_orbit) opt_toggle("TOTK_MOUSE_INVERT_Y", UI_MENU_MOUSE_INVERT_Y, UI_MENU_MOUSE_INVERT_Y_DESC);
+    if (!raiders() || raw_orbit) opt_slider("TOTK_MOUSE_SENS", UI_MENU_MOUSE_SENS, 0, 10, UI_MENU_MOUSE_SENS_DESC, 0.1f, "%.1f");
     binds_rows(scale);
     opt_end();
     binds_after_page();

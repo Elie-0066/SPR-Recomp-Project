@@ -200,6 +200,8 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_MOUSE_CAMERA_DESC] = "Rotate the normal follow camera directly with mouse movement, without controller "
                                 "acceleration or smoothing. Other camera modes use controller-style mouse input. "
                                 "Off restores controller-style input everywhere.",
+    [UI_MENU_MOUSE_INVERT_Y] = "Invert mouse Y",
+    [UI_MENU_MOUSE_INVERT_Y_DESC] = "Reverse vertical mouse movement.",
     [UI_MENU_MOUSE_SENS] = "Mouse camera sensitivity",
     [UI_MENU_MOUSE_SENS_DESC] = "How fast the mouse turns the camera.",
 
@@ -528,6 +530,8 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_PAD_LAYOUT_PROMPTS_RESTART] = "подсказки сменятся после перезапуска",
     [UI_MENU_STICK_DEADZONE] = "Мёртвая зона стиков",
     [UI_MENU_STICK_DEADZONE_DESC] = "Насколько нужно отклонить стик геймпада, чтобы игра это заметила. Увеличьте, если персонаж или камера двигаются сами.",
+    [UI_MENU_MOUSE_INVERT_Y] = "Инверсия мыши по вертикали",
+    [UI_MENU_MOUSE_INVERT_Y_DESC] = "Изменяет направление движения камеры по вертикали.",
     [UI_MENU_MOUSE_SENS] = "Чувствительность мыши",
     [UI_MENU_MOUSE_SENS_DESC] = "Как быстро мышь поворачивает камеру.",
 
@@ -852,6 +856,8 @@ static const char *const text_ko[UI_TEXT_COUNT] = {
     [UI_MENU_MOUSE_CAMERA] = "마우스 직접 카메라",
     [UI_MENU_MOUSE_CAMERA_DESC] = "컨트롤러식 가속이나 스무딩 없이 마우스 움직임으로 일반 추적 카메라를 직접 회전합니다. "
                                 "다른 카메라 모드는 컨트롤러식 마우스 입력을 사용합니다. 끄면 모든 곳에서 컨트롤러식 입력으로 돌아갑니다.",
+    [UI_MENU_MOUSE_INVERT_Y] = "마우스 Y축 반전",
+    [UI_MENU_MOUSE_INVERT_Y_DESC] = "마우스의 상하 움직임을 반전합니다.",
     [UI_MENU_MOUSE_SENS] = "마우스 카메라 감도",
     [UI_MENU_MOUSE_SENS_DESC] = "마우스로 카메라를 돌리는 속도입니다.",
 

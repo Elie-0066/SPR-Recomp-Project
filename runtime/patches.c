@@ -83,6 +83,14 @@ void *rt_patch_page(void) {
 #endif
 }
 
+uint64_t rt_raiders_pitch_map(void) {
+#ifdef RT_RAIDERS_PITCH_MAP
+    return RT_RAIDERS_PITCH_MAP;
+#else
+    return 0;
+#endif
+}
+
 // ---- guards (recomp/patches.py `guard`): checks of one register before game code follows it, cheap enough to run
 // once per element of a hot loop (recomp/patches-dkb100.txt, poolguard, #126). A failed check sends the code to the
 // guard's target instead. They read memory only once it is known to be readable.

@@ -79,5 +79,31 @@ class OwnRomfs(unittest.TestCase):
             self.assertFalse(R.own_data(dest, old, none))   # the dump is still there: rebuild from it
 
 
+class DirectMouseLift(unittest.TestCase):
+    def test_setup_requests_detection_and_warns_when_unavailable(self):
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / 'SPR'
+            ctx = SimpleNamespace(dest=dest, temp=Path(tmp) / 'work', reporter=Mock(),
+                                  layout=SimpleNamespace(python=sys.executable, recomp=ROOT / 'recomp'),
+                                  options=SimpleNamespace(jobs=2))
+            header = ctx.temp / 'gen' / 'patches.h'
+            for available in (True, False):
+                with self.subTest(available=available):
+                    ctx.reporter.reset_mock()
+                    response = '#define RT_RAIDERS_PITCH_MAP 0x7002466510ull\n' if available else ''
+                    with patch.object(R, 'plain_outputs'), patch.object(
+                            R, 'run_tool', side_effect=lambda *args: header.write_text(response)) as run_tool:
+                        R.Lift().run(ctx)
+                    self.assertIn('--raiders-mouse', run_tool.call_args.args[2])
+                    if available:
+                        ctx.reporter.warning.assert_not_called()
+                    else:
+                        ctx.reporter.warning.assert_called_once_with('warn.spr_direct_mouse_unavailable')
+
+
 if __name__ == '__main__':
     unittest.main()

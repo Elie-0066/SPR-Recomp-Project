@@ -9,7 +9,7 @@ Output, under --out:
   <mod>/<mod>_NNNN.c           one `void f_<addr>(Cpu *c)` per guest function, about --chunk-bytes of C per file
   <mod>/<mod>_table.c          sorted <mod>_fn_addrs[] / <mod>_fn_ptrs[] / <mod>_fn_count for rt_dispatch
   <mod>/manifest.json          chunk list, function count, statistics and timings
-  patches.h                    code patch sets for the runtime (recomp/patches.py; no sets without --patches)
+  patches.h                    code patch sets and resolved host hook addresses for the runtime
 
 Function discovery runs in this process, vectorised over the module's .text words. Function starts are the module
 seeds (.eh_frame_hdr, exported FUNC symbols, RELATIVE relocation targets), every BL target, and code addresses
@@ -645,7 +645,10 @@ def main():
     ap.add_argument('--chunk-bytes', type=int, default=3000000, help='estimated bytes of C per chunk')
     ap.add_argument('--big-fn', type=int, default=300000, help='estimated bytes of C from which a function gets '
                                                                'its own chunk')
-    ap.add_argument('--patches', type=Path, help='code patch table (recomp/patches.py)')
+    patch_options = ap.add_mutually_exclusive_group()
+    patch_options.add_argument('--patches', type=Path, help='code patch table (recomp/patches.py)')
+    patch_options.add_argument('--raiders-mouse', action='store_true',
+                               help='enable direct mouse input if the Raiders camera routines match')
     ap.add_argument('--reg-locals', type=int, default=regs.LOCALS,
                     help=f'guest registers per function kept in C locals (recomp/regs.py; default {regs.LOCALS}, 0: none)')
     ap.add_argument('--no-callee-saved-trust', action='store_true',
@@ -657,8 +660,20 @@ def main():
     t0 = time.perf_counter()
     mods = layout(args.exefs)
     write_layout(mods, args.out)
+    pitch_map = 0
     table = patches.load(args.patches, mods) if args.patches else patches.Table()
-    write_if_changed(args.out / 'patches.h', patches.header_text(table, GENERATED_MARKER))
+    if args.raiders_mouse:
+        import raiders_mouse
+        try:
+            table, pitch_map = raiders_mouse.resolve(args.exefs / 'main', mods)
+        except patches.PatchError as error:
+            print(f'Raiders direct mouse camera unavailable: {error}', flush=True)
+        else:
+            print(f'Raiders direct mouse camera: all six sites matched, pitch map at {pitch_map:#x}', flush=True)
+    patch_header = patches.header_text(table, GENERATED_MARKER)
+    if pitch_map:
+        patch_header += f'#define RT_RAIDERS_PITCH_MAP {pitch_map:#x}ull\n'
+    write_if_changed(args.out / 'patches.h', patch_header)
     want = args.modules.split(',')
     unknown = set(want) - {n for n, _, _ in mods}
     if unknown:

@@ -64,6 +64,17 @@ def adrp(pc, target, rd):
     return 0x90000000 | (imm & 3) << 29 | (imm >> 2) << 5 | rd
 
 
+def bl_target(word, pc):
+    return pc + ((((word & 0x3FFFFFF) ^ 0x2000000) - 0x2000000) << 2)
+
+
+def bl_word(pc, target):
+    delta = target - pc
+    if delta % 4 or not -(1 << 27) <= delta < (1 << 27):
+        raise PatchError(f'{pc:#x}: call target {target:#x} is out of branch range or unaligned')
+    return 0x94000000 | ((delta >> 2) & 0x3FFFFFF)
+
+
 class Table:
     """sets: [(name, env, default)]; sites: {module: {offset: (set index, [word | ('page', reg)], original)}}; page."""
 
@@ -90,6 +101,15 @@ class Table:
             a = base + off
             out[a] = (k, [adrp(a, self.page, w[1]) if isinstance(w, tuple) else w for w in repl])
         return out
+
+
+def patch_page(mods):
+    base, size = next((b, s) for n, b, s in mods if n == 'main')
+    page = (base + size + PAGE - 1) & ~(PAGE - 1)
+    nxt = min((b for _, b, _ in mods if b > base), default=None)
+    if nxt is not None and page + PAGE > nxt:
+        raise PatchError(f'no room for the patch page after main ({page:#x})')
+    return page
 
 
 def load(path, mods):
@@ -152,12 +172,7 @@ def load(path, mods):
                 mod[b] = head
         else:
             raise PatchError(f'{where}: cannot parse {raw!r}')
-    base, size = bases['main'][0], bases['main'][1]
-    page = (base + size + PAGE - 1) & ~(PAGE - 1)
-    nxt = min((b for _, b, _ in mods if b > base), default=None)
-    if nxt is not None and page + PAGE > nxt:
-        raise PatchError(f'no room for the patch page after main ({page:#x})')
-    return Table(sets, sites, page, spins, guards)
+    return Table(sets, sites, patch_page(mods), spins, guards)
 
 
 def check(table, mod, name):

@@ -55,7 +55,9 @@ program), or setup stops with `dkb.nup_zstd`.
    install folder so the 13 GB tree is renamed into place, not copied.
 3. **Translator.** Reuse `build/xlate/totk_xlate.exe` (or `--translator`) when its `.id` matches the translator
    sources, else build it with `tools/build_xlate.py` and the .NET 10 SDK (`--dotnet` selects a portable SDK).
-4. **Lift.** `recomp/gen.py` lifts all three modules (`main`, `sdk`, `subsdk0`) without patch sets.
+4. **Lift.** `recomp/gen.py` lifts all three modules (`main`, `sdk`, `subsdk0`) and checks the selected ExeFS for the
+   direct mouse camera. A unique match enables the camera. If the routines differ, Setup warns and builds with the
+   original camera controls. See [the mouse camera guide](raiders-mouse.md).
 5. **Compile.** `tools/build_game.py --version raiders --full-build` links `spr-recomp.exe` against `<dest>/romfs` and writes `romfs-index.bin` (`tools/romfs_index.py`).
 6. **Shaders.** `tools/shader_census.py --out <work> --seed <dest>/seed-nvn2.bin` lists the NVN 2 stages, then
    `spr-recomp.exe --translate-shaders` fills the shader cache and `--warm-shaders` builds the driver's pipeline

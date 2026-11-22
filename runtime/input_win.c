@@ -81,9 +81,10 @@ uint32_t input_key_char(int key) {
     return MapVirtualKeyW((UINT)key_vk(key), MAPVK_VK_TO_CHAR) & 0x7fffffffu;   // the top bit marks a dead key
 }
 
-// ---- mouse camera: raw motion accumulated by the window thread, one stick sample per presented frame
+// ---- mouse camera: raw motion accumulated by the window thread
 static volatile LONG mouse_dx, mouse_dy;   // raw counts since the last frame sample
 static volatile LONG cur_captured;         // cursor hidden and confined to the client area
+static volatile LONG capture_generation, focus_lost;
 static volatile LONG cur_active;           // WM_ACTIVATEAPP: the window's application is active
 // Bits: CUR_REL, Esc or activation by a click on the title bar or border: until a client click; CUR_ESC, set with CUR_REL
 // by Esc (not when it was already set): closing the menu gives the capture back. One word, changed by one CAS.
@@ -103,20 +104,29 @@ static SRWLOCK cur_lock = SRWLOCK_INIT;    // serialises cursor_update (window t
 // or the menu, and the mouse camera is on; release it otherwise. Safe from any thread.
 static void cursor_update(HWND h) {
     AcquireSRWLockExclusive(&cur_lock);
-    int want = h && cur_active && !(cur_rel & CUR_REL) && !cur_suspend && input_cursor_allowed() &&
+    int want = h && cur_active && !focus_lost && !(cur_rel & CUR_REL) && !cur_suspend && input_cursor_allowed() &&
                GetForegroundWindow() == h && !IsIconic(h);
+    int previous = cur_captured;
     RECT r;
     POINT tl = {0, 0};
     if (want && GetClientRect(h, &r) && ClientToScreen(h, &tl)) {
         RECT clip = {tl.x, tl.y, tl.x + r.right, tl.y + r.bottom};
         ClipCursor(&clip);
-        if (!cur_captured) { InterlockedExchange(&mouse_dx, 0); InterlockedExchange(&mouse_dy, 0); }
+        if (!cur_captured) {
+            mouse_dx = mouse_dy = 0;
+            InterlockedIncrement(&capture_generation);
+        }
         InterlockedExchange(&cur_captured, 1);
     } else {
         if (cur_captured) ClipCursor(NULL);
         InterlockedExchange(&cur_captured, 0);
     }
+    int changed = previous != cur_captured;
     ReleaseSRWLockExclusive(&cur_lock);
+    POINT cursor;
+    if (changed && h && GetForegroundWindow() == h && GetCursorPos(&cursor) && WindowFromPoint(cursor) == h &&
+        ScreenToClient(h, &cursor) && GetClientRect(h, &r) && PtInRect(&r, cursor))
+        PostMessageW(h, WM_SETCURSOR, (WPARAM)h, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
 }
 
 int input_cursor_released(void) { return (cur_rel & CUR_REL) != 0; }
@@ -139,8 +149,12 @@ int input_window_msg(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res) {
         UINT sz = sizeof ri;
         if (cur_captured && GetRawInputData((HRAWINPUT)l, RID_INPUT, &ri, &sz, sizeof(RAWINPUTHEADER)) != (UINT)-1 &&
             ri.header.dwType == RIM_TYPEMOUSE && !(ri.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE)) {
-            InterlockedAdd(&mouse_dx, ri.data.mouse.lLastX);
-            InterlockedAdd(&mouse_dy, ri.data.mouse.lLastY);
+            AcquireSRWLockExclusive(&cur_lock);
+            if (cur_captured) {
+                InterlockedAdd(&mouse_dx, ri.data.mouse.lLastX);
+                InterlockedAdd(&mouse_dy, ri.data.mouse.lLastY);
+            }
+            ReleaseSRWLockExclusive(&cur_lock);
         }
         break;   // DefWindowProc must see WM_INPUT for cleanup
     }
@@ -164,7 +178,11 @@ int input_window_msg(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res) {
         InterlockedExchange(&cur_active, w != 0);
         cursor_update(h);
         break;
-    case WM_SETFOCUS: case WM_KILLFOCUS: case WM_SIZE: case WM_MOVE:
+    case WM_SETFOCUS: case WM_KILLFOCUS:
+        InterlockedExchange(&focus_lost, m == WM_KILLFOCUS);
+        cursor_update(h);
+        break;
+    case WM_SIZE: case WM_MOVE:
         cursor_update(h);
         break;
     case WM_ENTERSIZEMOVE:
@@ -201,11 +219,15 @@ int ikb_down(int key) {
 
 int ikb_escape(void) { return key_down(VK_ESCAPE); }
 
+uint32_t ikb_capture_generation(void) { return (uint32_t)capture_generation; }
 int ikb_captured(void) { return cur_captured != 0; }
 
 void ikb_mouse_take(int32_t *dx, int32_t *dy) {
-    *dx = InterlockedExchange(&mouse_dx, 0);
-    *dy = InterlockedExchange(&mouse_dy, 0);
+    AcquireSRWLockExclusive(&cur_lock);
+    *dx = mouse_dx;
+    *dy = mouse_dy;
+    mouse_dx = mouse_dy = 0;
+    ReleaseSRWLockExclusive(&cur_lock);
 }
 
 void ikb_cursor_update(void) { cursor_update(gfx_window_handle()); }
