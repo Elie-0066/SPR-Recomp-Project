@@ -1,16 +1,18 @@
+## v0.2.1: Linux and SteamOS setup fixes, a self-contained install folder and ultrawide window sizes
+
+# **Don't forget to follow me on X for news about the next releases: https://x.com/Lyriiiie**
+
+
 SPR Recomp: a static recompilation of *Splatoon Raiders* (Switch 2) to a native Windows and Linux executable with a Vulkan renderer. It is an experimental fork of DKB Recomp (itself built on TotK Recomp).
 
-## New in 0.2.0
+## New in 0.2.1
 
-- **Linux version, new in this release.** `SPR-Setup-<version>-x86_64.AppImage` builds and runs the game on Linux and SteamOS. It is brand new and has not been played through from the package yet, so **please send your logs and open an issue for any problem**, even a small one, and also if it works: that is how the Linux version gets fixed. See *Reporting a bug* below for where the log is and how to get a more detailed one.
-- **Linux shadows:** the flickering dark blocks in direct sunlight are gone and the frame interval went from 24 to 16.7 ms on the Linux path (thanks to azlekayn, PR #24).
-- **AMD fixes, experimental.** None of them could be tested on an AMD GPU: they come from the logs AMD owners attached to issues #2 and #14 and from fixes other recompilations made for the same drivers. They may help, do nothing, or break something on AMD; NVIDIA and Intel take the same paths as before (except the recorder fence, which costs nothing there).
-  - Draws into compressed (BC) textures that AMD's driver cannot render into directly now go through an intermediate image instead of being dropped (the logs showed `render target format 0x4b ... not renderable here: left out`). This may fix the grey grid in the island select menu and other missing effects.
-  - When the driver has no mailbox present mode (AMD's), the game presents in relaxed FIFO: a frame that just misses the screen refresh is shown at once instead of waiting a whole refresh, which halved the frame rate near 60 fps (the ROG Ally running at 30 fps).
-  - The Vulkan recorder thread makes its commands visible to the GPU before handing them over (an SFENCE), the cause of a device loss on AMD that mkw-recomp found. The recorder stays off by default on AMD.
-- **Controllers:** when one controller shows up twice (a Flydigi Vader 5 Pro on its receiver), the one with motion sensors is used; rumble commands go out at most every 30 ms, which stopped those pads from freezing their input (thanks to azlekayn, PR #25 and #26).
-- **Aiming up and down:** if the right stick only turns left and right, turn off **Motion Controls** in the game's own options (not the F1 menu): with it on, the game aims vertically with the gyro only (issues #2 and #23).
-- **Setup:** when the install folder, the setup folder and your dump overlap, the setup now says which folder to move (issue #27).
+- **Linux and SteamOS setup fixed.** The AppImage of 0.2.0 stopped on SteamOS at the computer check (`stdio.h` not found, issue #30) and on other distributions in the compile (`SDL3/SDL.h` not found, issue #31): the C headers it carries had left out SDL3, Opus and libvpx, and the check did not use them at all. Both now build from the AppImage alone. Please keep sending Linux logs, working or not.
+- **The install folder holds everything** (issue #32). When you give the setup an ExeFS and a RomFS folder, the RomFS now goes into `<install folder>/romfs` as well, so the game keeps running after you move or delete your dump. On the same disk the files are hard links and take no extra space; on another disk they are copied (about 13 GB). An update rebuilds from that copy when the dump is gone.
+- **Ultrawide window sizes** (issue #13). The *Window size* row of the F1 menu now lists the 21:9 and 32:9 sizes that fit your monitor (2560x1080, 3440x1440, 3840x1600, 5120x2160, 3840x1080, 5120x1440) and your monitor's own size. The game's own wide picture is the *Ultrawide* row of the Graphics group (up to 3840x1600; the game cannot render wider than 3840).
+- **AMD: a detailed crash log.** The AMD crash in level 3 (issue #28) is a GPU fault the normal log cannot place. If the game crashes on your AMD GPU, see *Reporting a bug* below for how to start it with GPU breadcrumbs and attach that log.
+
+Everything from 0.2.0 (the AMD fixes, the controller fixes, the Linux shadows) is in this release too.
 
 ## Downloads
 
@@ -36,7 +38,7 @@ Both hold the same setup, which builds the game on your machine; neither holds g
 
 - A GPU with Vulkan 1.3 and a recent driver; tested on NVIDIA only. **AMD support is experimental**: no AMD GPU has been tested by the maintainer, every AMD fix so far is experimental, and reports from AMD owners, working or not, are welcome.
 - 16 GB of RAM plus a large page file (the process commits about 11 GB), 32 GB is comfortable.
-- About 6 GB free for the build, besides the dump.
+- About 6 GB free for the build, besides the dump, plus 13 GB for the RomFS when the install folder is on another disk than the dump.
 
 On Linux the build needs the same RAM and disk space, and a Vulkan 1.3 driver (Mesa RADV or NVIDIA's). Linux 6.7 or later is faster (write watch).
 
@@ -51,6 +53,14 @@ The log is `logs/dkb.log` in the install folder, next to `spr-recomp.exe` (Windo
 - Windows (Command Prompt, in the install folder): `set TOTK_TRACE=perf` then `spr-recomp.exe --boot`
 - Windows (PowerShell, in the install folder): `$env:TOTK_TRACE="perf"; .\spr-recomp.exe --boot`
 - Linux (terminal, in the install folder): `TOTK_TRACE=perf ./spr-recomp --boot`
+
+**AMD: a log for a crash or a graphics glitch.** Start the game with the GPU breadcrumbs, which name in the log the last shaders the GPU ran before a crash, together with the performance trace:
+
+- Windows (Command Prompt, in the install folder): `set TOTK_CRUMB_BIND=1` then `set TOTK_TRACE=perf` then `spr-recomp.exe --boot`
+- Windows (PowerShell, in the install folder): `$env:TOTK_CRUMB_BIND="1"; $env:TOTK_TRACE="perf"; .\spr-recomp.exe --boot`
+- Linux (terminal, in the install folder): `TOTK_CRUMB_BIND=1 TOTK_TRACE=perf ./spr-recomp --boot`
+
+The game runs a little slower this way. Play until the crash or the glitch, then attach `logs/dkb.log` (and `dkb.1.log` if you started it again since) with a screenshot of the glitch, your GPU and driver version.
 
 AMD owners can help test the recorder fence: the recorder thread (which records the GPU commands on a second thread, faster) is off by default on AMD because it crashed at launch in 0.1.8. Start the game the same way with `TOTK_VK_RECORDER=1` instead of `TOTK_TRACE=perf`, and say in an issue whether it still crashes.
 
