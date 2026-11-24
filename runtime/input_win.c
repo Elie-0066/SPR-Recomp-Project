@@ -83,6 +83,7 @@ uint32_t input_key_char(int key) {
 
 // ---- mouse camera: raw motion accumulated by the window thread
 static volatile LONG mouse_dx, mouse_dy;   // raw counts since the last frame sample
+static volatile LONG client_mouse_buttons; // held buttons that were pressed in the client area
 static volatile LONG cur_captured;         // cursor hidden and confined to the client area
 static volatile LONG capture_generation, focus_lost;
 static volatile LONG cur_active;           // WM_ACTIVATEAPP: the window's application is active
@@ -133,6 +134,7 @@ int input_cursor_released(void) { return (cur_rel & CUR_REL) != 0; }
 
 void input_cursor_suspend(int on) {
     InterlockedExchange(&cur_suspend, on != 0);
+    if (on) InterlockedExchange(&client_mouse_buttons, 0);
     cursor_update(gfx_window_handle());
 }
 
@@ -147,14 +149,26 @@ int input_window_msg(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res) {
     case WM_INPUT: {
         RAWINPUT ri;
         UINT sz = sizeof ri;
-        if (cur_captured && GetRawInputData((HRAWINPUT)l, RID_INPUT, &ri, &sz, sizeof(RAWINPUTHEADER)) != (UINT)-1 &&
-            ri.header.dwType == RIM_TYPEMOUSE && !(ri.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE)) {
-            AcquireSRWLockExclusive(&cur_lock);
-            if (cur_captured) {
-                InterlockedAdd(&mouse_dx, ri.data.mouse.lLastX);
-                InterlockedAdd(&mouse_dy, ri.data.mouse.lLastY);
+        if ((cur_captured || client_mouse_buttons) &&
+            GetRawInputData((HRAWINPUT)l, RID_INPUT, &ri, &sz, sizeof(RAWINPUTHEADER)) != (UINT)-1 &&
+            ri.header.dwType == RIM_TYPEMOUSE) {
+            // A release outside the client area need not produce a window button message.
+            static const USHORT up[] = {RI_MOUSE_LEFT_BUTTON_UP, RI_MOUSE_RIGHT_BUTTON_UP, RI_MOUSE_MIDDLE_BUTTON_UP,
+                                        RI_MOUSE_BUTTON_4_UP, RI_MOUSE_BUTTON_5_UP};
+            if (client_mouse_buttons && ri.data.mouse.usButtonFlags) {
+                LONG released = 0;
+                for (unsigned i = 0; i < sizeof up / sizeof up[0]; i++)
+                    if (ri.data.mouse.usButtonFlags & up[i]) released |= 1L << i;
+                InterlockedAnd(&client_mouse_buttons, ~released);
             }
-            ReleaseSRWLockExclusive(&cur_lock);
+            if (cur_captured && !(ri.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE)) {
+                AcquireSRWLockExclusive(&cur_lock);
+                if (cur_captured) {
+                    InterlockedAdd(&mouse_dx, ri.data.mouse.lLastX);
+                    InterlockedAdd(&mouse_dy, ri.data.mouse.lLastY);
+                }
+                ReleaseSRWLockExclusive(&cur_lock);
+            }
         }
         break;   // DefWindowProc must see WM_INPUT for cleanup
     }
@@ -167,18 +181,39 @@ int input_window_msg(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res) {
     case WM_KEYDOWN:   // Esc is unbound in the game layout: it releases the cursor and opens the menu (menu_window_msg)
         if (w == VK_ESCAPE && !(cur_rel & CUR_REL)) { cur_rel_update(rel_esc); cursor_update(h); }
         break;
-    case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN:   // client area only; poll_merged drops the click
-        if (cur_rel & CUR_REL) { cur_rel_update(rel_clear); cursor_update(h); }
+    case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN: case WM_XBUTTONDOWN:
+    case WM_LBUTTONUP: case WM_RBUTTONUP: case WM_MBUTTONUP: case WM_XBUTTONUP: {
+        int down = m == WM_LBUTTONDOWN || m == WM_RBUTTONDOWN || m == WM_MBUTTONDOWN || m == WM_XBUTTONDOWN;
+        int key = KEY_MOUSE_L;
+        if (m == WM_RBUTTONDOWN || m == WM_RBUTTONUP) key = KEY_MOUSE_R;
+        if (m == WM_MBUTTONDOWN || m == WM_MBUTTONUP) key = KEY_MOUSE_M;
+        if (m == WM_XBUTTONDOWN || m == WM_XBUTTONUP) key = HIWORD(w) == XBUTTON1 ? KEY_MOUSE_X1 : KEY_MOUSE_X2;
+        int recapture = down && key <= KEY_MOUSE_M && (cur_rel & CUR_REL);
+        // The existing bindings use physical left and right buttons, even with swapped Windows buttons.
+        if (key <= KEY_MOUSE_R && GetSystemMetrics(SM_SWAPBUTTON)) key = KEY_MOUSE_R - (key - KEY_MOUSE_L);
+        LONG bit = 1L << (key - KEY_MOUSE_L);
+        if (down && !cur_suspend) InterlockedOr(&client_mouse_buttons, bit);
+        if (!down) InterlockedAnd(&client_mouse_buttons, ~bit);
+        if (recapture) { cur_rel_update(rel_clear); cursor_update(h); }
         break;
+    }
     case WM_MOUSEACTIVATE:   // sent before WM_ACTIVATEAPP: a title bar or border click must not capture
         if (LOWORD(l) != HTCLIENT) cur_rel_update(rel_title);
+        else if (input_raiders_available() && !input_blocks_mouse()) {
+            *res = MA_ACTIVATEANDEAT;  // focusing the window must not also press a game button
+            return 1;
+        }
         break;
     case WM_ACTIVATEAPP:
-        if (!w) cur_rel_update(rel_clear);   // Alt+Tab back in captures again
+        if (!w) {
+            InterlockedExchange(&client_mouse_buttons, 0);
+            cur_rel_update(rel_clear);   // Alt+Tab back in captures again
+        }
         InterlockedExchange(&cur_active, w != 0);
         cursor_update(h);
         break;
     case WM_SETFOCUS: case WM_KILLFOCUS:
+        if (m == WM_KILLFOCUS) InterlockedExchange(&client_mouse_buttons, 0);
         InterlockedExchange(&focus_lost, m == WM_KILLFOCUS);
         cursor_update(h);
         break;
@@ -215,6 +250,10 @@ int ikb_foreground(void) {
 int ikb_down(int key) {
     int vk = key_vk(key);
     return vk && key_down(vk);
+}
+
+int ikb_client_mouse_down(int key) {
+    return (client_mouse_buttons & (1L << (key - KEY_MOUSE_L))) && ikb_down(key);
 }
 
 int ikb_escape(void) { return key_down(VK_ESCAPE); }

@@ -16,7 +16,7 @@ typedef struct {
 static PlatMutex orbit_lock = PLAT_MUTEX_INIT;
 static OrbitFrame manual, pitch_frame;
 static float pitch_step, pitch_coordinate;
-static int pitch_solved;
+static int pitch_solved, pitch_swim;
 
 static OrbitFrame frame(Cpu *c) {
     return (OrbitFrame){c, c->x[19], c->sp};
@@ -57,7 +57,7 @@ static void orbit_step(Cpu *c) {
     pitch_solved = 0;
 
     float delta[2];
-    input_raiders_orbit(allowed ? camera : 0, delta);
+    int swim = input_raiders_orbit(allowed ? camera : 0, delta);
     if (delta[0]) {
         float extra;
         memcpy(&extra, &c->v[4], sizeof extra);
@@ -68,6 +68,7 @@ static void orbit_step(Cpu *c) {
     }
     if (delta[1]) {
         pitch_step = delta[1];
+        pitch_swim = swim;
         pitch_frame = frame(c);
     }
     plat_mutex_unlock(&orbit_lock);
@@ -104,9 +105,16 @@ static int apply_pitch(Cpu *c) {
     // PlayerCamera's ordinary pose builder interpolates between these three
     // angles using the signed orbit coordinate.
     float current = field(camera, 0x178);
-    float angle = center + current * (current < 0 ? center - lower : upper - center);
-    float target = fmaxf(lower, fminf(upper, angle + pitch_step));
-    float wanted = (target - center) / (target < center ? center - lower : upper - center);
+    float wanted;
+    if (pitch_swim) {
+        // The standing view has 67.5 degrees on each side of center. Match its fraction of travel in
+        // the swim view, whose limited and asymmetric range would otherwise feel faster near the upper limit.
+        wanted = fmaxf(-1.0f, fminf(1.0f, current + pitch_step / 67.5f));
+    } else {
+        float angle = center + current * (current < 0 ? center - lower : upper - center);
+        float target = fmaxf(lower, fminf(upper, angle + pitch_step));
+        wanted = (target - center) / (target < center ? center - lower : upper - center);
+    }
 
     GuestFn map = rt_dispatch_lookup(rt_raiders_pitch_map());
     if (!map) return 0;

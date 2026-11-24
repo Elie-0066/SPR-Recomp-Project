@@ -186,7 +186,7 @@ void input_sdl_event(const SDL_Event *e) {
     case SDL_EVENT_MOUSE_BUTTON_UP: {
         int down = e->type == SDL_EVENT_MOUSE_BUTTON_DOWN;
         int k = mouse_key(e->button.button);
-        if (k) key_held[k] = (uint8_t)down;
+        if (k && (!down || focused)) key_held[k] = (uint8_t)down;
         if (down && (cur_rel & CUR_REL)) plat_xchg32(&cur_rel, 0);   // a click in the window captures again
         break;
     }
@@ -217,6 +217,7 @@ void input_sdl_event(const SDL_Event *e) {
 // ---- input_wsys.h
 int ikb_foreground(void) { return focused != 0; }
 int ikb_down(int key) { return key > 0 && key < KEY_COUNT && key_held[key]; }
+int ikb_client_mouse_down(int key) { return !cur_suspend && ikb_down(key); }
 int ikb_escape(void) { return esc_held != 0; }
 uint32_t ikb_capture_generation(void) { return __atomic_load_n(&capture_generation, __ATOMIC_ACQUIRE); }
 int ikb_captured(void) { return captured != 0; }

@@ -4,7 +4,7 @@ Open SPR Setup and select a `.nup` or the ExeFS and complete RomFS of the update
 
 The generator uses SHA-256 fingerprints of the player camera update, pitch map and pose builder from the verified 65536 update. It ignores relocatable call and address fields while checking local control flow, registers and field offsets. It follows the camera's calls to both helpers and calculates the six patch sites and their branch destinations for the target layout. A successful match still needs a gameplay test on that update.
 
-The manual orbit receives relative mouse motion on the next eligible player camera update. A sensitivity of 1 requests 0.064 degrees per count on either axis. A sensitivity of 0 releases the mouse. Vertical inversion is independent of sensitivity.
+The manual orbit receives relative mouse motion on the next eligible player camera update. A sensitivity of 1 requests 0.064 degrees per count on either axis in the standing view. While the mapped ZL button is held, vertical mouse motion travels the same fraction of the native camera's pitch range as in the standing view. The swim view can have a shorter range above its neutral angle than below it. A sensitivity of 0 releases the mouse. Vertical inversion is independent of sensitivity.
 
 ## Camera path
 
@@ -19,13 +19,13 @@ Offsets below are relative to the start of the verified main module.
 | 0x2461d24 | The ordinary pitch response interpolates the normalized orbit coordinate. A solved mouse step uses its target in the current update. |
 | 0x2462d24, 0x2462d3c | The pose builder at 0x245d750 evaluates the ordinary and alternate geometry using the resulting coordinate. Nonzero explicit pose requests can select another builder. |
 
-The three pitch angles in the ordinary pose define its lower endpoint, neutral angle and upper endpoint. The guest input angle maps nonlinearly onto this range. The hook adds the mouse increment to the current pose angle, then inverts the native pitch map on its regular branch. This keeps the stored input and the camera pose in agreement when motion stops. The native reference bounds, vertical adjustment and downstream view construction remain active. Requests outside the regular reference branch use the game's update.
+The three pitch angles in the ordinary pose define its lower endpoint, neutral angle and upper endpoint. The guest input angle maps nonlinearly onto this range. The hook inverts the native pitch map on its regular branch to reach the requested pose angle or swim orbit coordinate. This keeps the stored input and the camera pose in agreement when motion stops. The native reference bounds, vertical adjustment and downstream view construction remain active. Requests outside the regular reference branch use the game's update.
 
 The mouse adds no time multiplier, dead zone, smoothing or speed cap. It samples both raw axes once and applies the same scale during movement. Other sources of motion include the gamepad, native recentering, camera mode transitions and contact with scenery. Projectiles, the impact marker, collision queries and the renderer use their existing code.
 
 ## Cursor and controls
 
-The manual gate owns capture while gameplay has focus. The settings menu, text input, focus changes and window resizing suspend mouse input. When the camera stops updating, a watchdog releases capture after five presents. A new capture discards pending motion, and a held refocus click is suppressed until release.
+The manual camera captures the cursor while gameplay has focus. When the camera stops updating, a watchdog releases capture after five presents. A new capture discards pending motion. Mapped mouse buttons work inside the focused game window while the cursor is free, including on the title screen. The settings menu and text input block game clicks, and a click that activates the window only gives it focus.
 
 F1 opens the controls, including mouse sensitivity and vertical inversion.
 

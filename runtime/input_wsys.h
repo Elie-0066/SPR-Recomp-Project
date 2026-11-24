@@ -6,6 +6,7 @@
 // ---- what the back end provides
 int ikb_foreground(void);                     // the game window is in front: keys count
 int ikb_down(int key);                        // key id (input_map.h KEY_*) held, mouse buttons included
+int ikb_client_mouse_down(int key);           // mouse press started in the game window, independent of camera capture
 int ikb_escape(void);                         // Esc held (no key id: it belongs to the menu)
 uint32_t ikb_capture_generation(void);          // increments on each acquisition, even between two HID polls
 int ikb_captured(void);                       // the cursor is captured for the mouse camera

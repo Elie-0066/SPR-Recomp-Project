@@ -101,6 +101,40 @@ int main(void) {
     near(view_degrees(), -7.5f);
     near(update(0, 0, 0), 0);
     assert(cpu.v[2] == 0x3e4ccccd);
+    put_field(0x15bc, -60);
+    put_field(0x15c0, 0);
+    put_field(0x15c4, 20);
+    input_raiders_buttons(1ull << B_ZL);
+    near(update(0, 100, -100), -6.4f);
+    near(view_degrees(), 6.4f * 20 / 67.5f);
+    near(update(0, -100, 100), 6.4f);
+    near(view_degrees(), 0);
+    near(update(0, 0, 100), 0);
+    near(view_degrees(), -6.4f * 60 / 67.5f);
+    near(update(0, 0, -100), 0);
+    near(view_degrees(), 0);
+    // With ZL held and the mouse still, the hooks leave the guest's stick and sensor inputs intact.
+    set_scalar(&cpu, 0, 0.2f);
+    set_scalar(&cpu, 1, -35.0f);
+    set_scalar(&cpu, 2, 0.15f);
+    set_scalar(&cpu, 4, 0.03f);
+    set_scalar(&cpu, 9, -25.0f);
+    cpu.x[1] = 0;
+    Cpu native_input = cpu;
+    sites[0](&cpu);
+    sites[1](&cpu);
+    sites[3](&cpu);
+    sites[2](&cpu);
+    assert(memcmp(cpu.v, native_input.v, sizeof cpu.v) == 0);
+    put_field(0x15bc, -75);
+    put_field(0x15c0, -7.5f);
+    put_field(0x15c4, 60);
+    input_raiders_buttons(1ull << B_ZR);
+    near(update(0, 0, -100), 0);
+    near(view_degrees(), -7.5f + 6.4f);
+    near(update(0, 0, 100), 0);
+    near(view_degrees(), -7.5f);
+    input_raiders_buttons(0);
     float sum = 0;
     for (int i = 0; i < 8; i++) {
         gfx_counters.frames += i % 3;
@@ -142,6 +176,6 @@ int main(void) {
     update(0, 0, -50); near(view_degrees(), start);
     sensitivity = 0;
     near(update(0, 500, 100), 0); assert(!captured);
-    puts("PASS: raw distance, reversals, split batches, native pitch map and limits, changed pose, sensor reference, inversion, mode gates, focus, menus and cursor");
+    puts("PASS: raw distance, ZL pitch scale, reversals, split batches, native pitch map and limits, changed pose, sensor reference, inversion, mode gates, focus, menus and cursor");
     return 0;
 }

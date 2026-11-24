@@ -653,6 +653,10 @@ static int pad_read(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
     return 1;
 }
 
+// Text entry and the settings menu block the game until their closing press is released.
+// The flags are 0 when closed, 1 when open and 2 when waiting for release.
+static volatile int32_t g_block, g_menu;
+
 static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
     uint64_t b = 0;
     int32_t sl[2] = {0, 0}, sr[2] = {0, 0};
@@ -673,15 +677,20 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
         }
         if (ikb_foreground()) {
             uint8_t down[KEY_COUNT] = {0};
-            // Mouse buttons count only while the cursor is captured, and a button already held when the capture began
-            // (the click that refocused the window) is ignored until it is released.
+            // Raiders gets clicks from the game window even when no player camera owns the cursor.
+            // Other games still gate buttons on capture and ignore clicks already held at acquisition.
             static uint32_t last_capture;
             static uint8_t mouse_ignore[KEY_COUNT];
             int cap = ikb_captured();
             uint32_t generation = ikb_capture_generation();
             for (int k = 1; k < KEY_COUNT; k++) {
+                int mouse = k >= KEY_MOUSE_L && k <= KEY_MOUSE_X2;
+                if (raiders && mouse) {
+                    down[k] = g_block != 1 && g_menu != 1 && ikb_client_mouse_down(k);
+                    continue;
+                }
                 down[k] = ikb_down(k);
-                if (k < KEY_MOUSE_L || k > KEY_MOUSE_X2) continue;
+                if (!mouse) continue;
                 if (cap && generation != last_capture) mouse_ignore[k] = down[k];
                 if (!down[k]) mouse_ignore[k] = 0;
                 if (!cap || mouse_ignore[k]) down[k] = 0;
@@ -715,12 +724,6 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
     stick_bits(&b, sr[0], sr[1], B_SR_LEFT);
     *buttons = b; *lx = sl[0]; *ly = sl[1]; *rx = sr[0]; *ry = sr[1];
 }
-
-// Text entry (swkbd_*.c): while it is open the game reads no input, as behind the keyboard applet; after it closes
-// the game reads none until every button and stick direction is released, so the press that closed it stays there.
-// g_block: 0 off, 1 text entry open, 2 closed, waiting for the release. The cursor is released while it is open.
-static volatile int32_t g_block;
-static volatile int32_t g_menu;   // the in-game menu, the same way (input_menu)
 
 int input_blocks_mouse(void) {
     return g_block || g_menu;
@@ -786,10 +789,14 @@ static int blocked(volatile int32_t *flag, uint64_t buttons) {
 }
 
 void input_poll(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
+    // The menu combo can close the menu inside poll_merged, which hides that poll's buttons.
+    int text_open = g_block == 1, menu_open = g_menu == 1;
     poll_merged(buttons, lx, ly, rx, ry);
-    int text = blocked(&g_block, *buttons), menu = blocked(&g_menu, *buttons);
-    if (!text && !menu) return;
-    *buttons = 0; *lx = *ly = *rx = *ry = 0;
+    int text = text_open || blocked(&g_block, *buttons), menu = menu_open || blocked(&g_menu, *buttons);
+    if (text || menu) {
+        *buttons = 0; *lx = *ly = *rx = *ry = 0;
+    }
+    input_raiders_buttons(*buttons);
 }
 
 void input_poll_ui(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {

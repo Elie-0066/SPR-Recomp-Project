@@ -3,6 +3,7 @@
 #include "cfg.h"
 #include "host.h"
 #include "input.h"
+#include "input_map.h"
 #include "input_wsys.h"
 #include "nvn_api.h"
 #include "platform/platform.h"
@@ -11,6 +12,7 @@
 static PlatMutex sample_lock = PLAT_MUTEX_INIT;
 static uint64_t orbit_camera, orbit_present;
 static int orbit_cursor;
+static int zl_held;
 
 int input_raiders_available(void) {
     return rt_patch_enabled(rt_patch_set("raidersmouse"));
@@ -46,7 +48,11 @@ void input_raiders_cursor_tick(void) {
     if (changed) ikb_cursor_update();
 }
 
-void input_raiders_orbit(uint64_t camera, float degrees[2]) {
+void input_raiders_buttons(uint64_t buttons) {
+    __atomic_store_n(&zl_held, (buttons & (1ull << B_ZL)) != 0, __ATOMIC_RELAXED);
+}
+
+int input_raiders_orbit(uint64_t camera, float degrees[2]) {
     int32_t dx, dy;
     plat_mutex_lock(&sample_lock);
     double sens = cfg_double("TOTK_MOUSE_SENS");
@@ -60,8 +66,10 @@ void input_raiders_orbit(uint64_t camera, float degrees[2]) {
     int changed = set_orbit_cursor(camera != 0);
     ikb_mouse_take(&dx, &dy);
     int active = continuous && !input_blocks_mouse() && ikb_foreground() && ikb_captured();
+    int swim = __atomic_load_n(&zl_held, __ATOMIC_RELAXED);
     degrees[0] = active ? dx * scale : 0;
     degrees[1] = active ? dy * (cfg_bool("TOTK_MOUSE_INVERT_Y") ? scale : -scale) : 0;
     plat_mutex_unlock(&sample_lock);
     if (changed) ikb_cursor_update();
+    return swim;
 }
