@@ -1,18 +1,26 @@
-## v0.2.1: Linux and SteamOS setup fixes, a self-contained install folder and ultrawide window sizes
+## v0.2.2: gyro through Steam, a 5120x2160 ultrawide shape and experimental shader fixes
 
 # **Don't forget to follow me on X for news about the next releases: https://x.com/Lyriiiie**
 
 
 SPR Recomp: a static recompilation of *Splatoon Raiders* (Switch 2) to a native Windows and Linux executable with a Vulkan renderer. It is an experimental fork of DKB Recomp (itself built on TotK Recomp).
 
-## New in 0.2.1
+## New in 0.2.2
 
-- **Linux and SteamOS setup fixed.** The AppImage of 0.2.0 stopped on SteamOS at the computer check (`stdio.h` not found, issue #30) and on other distributions in the compile (`SDL3/SDL.h` not found, issue #31): the C headers it carries had left out SDL3, Opus and libvpx, and the check did not use them at all. Both now build from the AppImage alone. Please keep sending Linux logs, working or not.
-- **The install folder holds everything** (issue #32). When you give the setup an ExeFS and a RomFS folder, the RomFS now goes into `<install folder>/romfs` as well, so the game keeps running after you move or delete your dump. On the same disk the files are hard links and take no extra space; on another disk they are copied (about 13 GB). An update rebuilds from that copy when the dump is gone.
-- **Ultrawide window sizes** (issue #13). The *Window size* row of the F1 menu now lists the 21:9 and 32:9 sizes that fit your monitor (2560x1080, 3440x1440, 3840x1600, 5120x2160, 3840x1080, 5120x1440) and your monitor's own size. The game's own wide picture is the *Ultrawide* row of the Graphics group (up to 3840x1600; the game cannot render wider than 3840).
-- **AMD: a detailed crash log.** The AMD crash in level 3 (issue #28) is a GPU fault the normal log cannot place. If the game crashes on your AMD GPU, see *Reporting a bug* below for how to start it with GPU breadcrumbs and attach that log.
+Each entry says whether it is **tested** or **experimental**. Experimental means that the code is in, but the maintainer has no hardware or setup to confirm it: please report whether it works for you.
 
-Everything from 0.2.0 (the AMD fixes, the controller fixes, the Linux shadows) is in this release too.
+- **Gyro when the game is started from Steam** (issue #38) - **experimental**, not yet tried with a real controller under Steam here. Steam Input hides the real controller and shows a virtual one, usually without motion sensors. Buttons and sticks still come from Steam's virtual gamepad, so your remapping holds; the gyro is read from the real controller behind it. Your Steam layout must bind the gyro to something (for example *As Mouse*, with an activation button you do not use), or Steam can switch the gyro off. The fix comes from TotK Recomp (patch by St5sz2Jk).
+- **Ultrawide 3840x1620** (issue #13) - **tested** up to the intro screens on an RTX 3050, not in a mission. It is the exact shape of a 5120x2160 screen. The *Ultrawide* row changes the picture the game draws and needs a restart.
+- **Resolution is greyed out while Ultrawide is on** (issue #35). It had no effect then, and the menu now says so. The bars beside some of the game's own menus remain: those menus are 16:9, and *Fit picture to window* cannot stretch them.
+- **Shader translation fixes from DKB Recomp** - **experimental** for the problems below. They build, and all 3,690 of the game's shader stages translate, but the effect has not been confirmed on AMD or Intel:
+  - some 64-bit stores of zero wrote an address instead, and some subgroup operations ran in the wrong place. This *may* help with the AMD crash in level 3 (issue #28) and the flickering grass on Intel Arc (issue #37);
+  - a shader loop that could hang the GPU, seen on Intel Arc, now always ends.
+
+**The first launch after the update translates the shaders again.** It takes a few minutes, once.
+
+**Not fixed yet:** the horizontal streaks and washed-out sky and water on AMD (issues #14 and #29). The cause is not known. If you have an AMD GPU, a frame dump helps most: start the game with `TOTK_DUMP=key` set the same way as the variables in *Reporting a bug*, press F9 while the glitch is on screen, and attach `passes.txt` from the `dump` folder. **Do not attach the PNG files or any other dump file**: they can hold game images.
+
+Everything from 0.2.1 (the Linux and SteamOS setup fixes, the self-contained install folder) is in this release too.
 
 ## Downloads
 
