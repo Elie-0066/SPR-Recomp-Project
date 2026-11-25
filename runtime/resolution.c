@@ -325,7 +325,7 @@ int res_sizes(unsigned out[2], unsigned scene[2]) {
 }
 
 // ---- Splatoon Raiders ultrawide (TOTK_RAIDERS_WIDE: off, 21:9 = 2560x1080, 32:9 = 3072x864, or 3440x1440,
-// 3840x1600, 3840x1080)
+// 3840x1600, 3840x1620 (the shape of a 5120x2160 screen), 3840x1080)
 // The graphics module's resolution update (main+34eb2c0) takes the size the display mode asks for (3840x2160 docked,
 // times a float of the display class: 0.8 at class 1, 3072x1728) and caps each side by the class's entry of the table
 // at main+4162c24 (640x480 ... 3840x2160), then sizes its render targets, its 3D scene (two thirds of the output) and
@@ -368,6 +368,7 @@ static void raiders_wide_decide(void) {
     else if (!strcmp(v, "32:9")) RW.w = 3072, RW.h = 864;
     else if (!strcmp(v, "3440x1440")) RW.w = 3440, RW.h = 1440;
     else if (!strcmp(v, "3840x1600")) RW.w = 3840, RW.h = 1600;
+    else if (!strcmp(v, "3840x1620")) RW.w = 3840, RW.h = 1620;
     else if (!strcmp(v, "3840x1080")) RW.w = 3840, RW.h = 1080;
     else return;
     // Handheld, the update caps by the 1920x1080 entry whatever the class: the output would stay 16:9 under widened

@@ -104,7 +104,7 @@ static const CfgMeta metas[] = {
     {"VK_PRESENT", "mailbox", "mailbox|fifo|immediate", LIVE}, {"GPU_INDEX", "", NULL, RESTART},
     {"PERF_OVERLAY", "off", "off|fps|full", LIVE},
     {"OUTPUT_RES", "1920x1080", NULL, RESTART}, {"RENDER_SCALE", "game", "game|50|59|67|75|77|100|125|150|200", RESTART},
-    {"RAIDERS_RES", "1080p", "1080p|1440p|2160p", RESTART}, {"RAIDERS_WIDE", "off", "off|21:9|32:9|3440x1440|3840x1600|3840x1080", RESTART},   // ov_system.c ov_graphics_scale
+    {"RAIDERS_RES", "1080p", "1080p|1440p|2160p", RESTART}, {"RAIDERS_WIDE", "off", "off|21:9|32:9|3440x1440|3840x1600|3840x1620|3840x1080", RESTART},   // ov_system.c ov_graphics_scale
     {"UPSCALER", "fsr", "fsr|bilinear|dlss", LIVE}, {"SHARPNESS", "80", "0..100", LIVE}, {"SMAA", "off", "off|low|medium|high", LIVE},
     {"FRAME_GEN", "off", "off|2x", LIVE},   // vk_framegen.c, experimental
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},

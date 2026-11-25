@@ -43,6 +43,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_WINDOW_SIZE] = "Window size", [UI_MENU_WINDOW_SIZE_DESC] = "Size of the game window when not fullscreen.",
     [UI_MENU_WINDOW_SIZE_CUSTOM] = "Custom",
     [UI_MENU_WINDOWED_ONLY] = "Only available in windowed mode",
+    [UI_MENU_RAIDERS_WIDE_SETS] = "Set by Ultrawide",
     [UI_MENU_PRESENT] = "Presentation", [UI_MENU_PRESENT_DESC] = "How finished frames reach the screen.",
     [UI_MENU_PRESENT_MAILBOX] = "Mailbox", [UI_MENU_PRESENT_VSYNC] = "VSync", [UI_MENU_PRESENT_IMMEDIATE] = "Immediate",
     [UI_MENU_PRESENT_IN_USE] = "in use: %s",
@@ -82,7 +83,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                                  "1920 x 1080 above. Higher needs more video memory and GPU time.",
     [UI_MENU_RAIDERS_WIDE] = "Ultrawide",
     [UI_MENU_RAIDERS_WIDE_DESC] = "Widens the picture and the camera's view for a 21:9 or 32:9 screen: the game "
-                                  "renders 2560 x 1080 to 3840 x 1600 (21:9) or 3072 x 864 to 3840 x 1080 (32:9) and "
+                                  "renders 2560 x 1080 to 3840 x 1620 (21:9) or 3072 x 864 to 3840 x 1080 (32:9) and "
                                   "the window or screen scales it; larger sizes cost more GPU time. The HUD keeps its "
                                   "proportions in a centred 16:9 area. Replaces Resolution while on. Restart to apply.",
     [UI_MENU_UPSCALER] = "Scaling to the window",
@@ -374,6 +375,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_WINDOW_SIZE] = "Размер окна", [UI_MENU_WINDOW_SIZE_DESC] = "Размер окна игры вне полноэкранного режима.",
     [UI_MENU_WINDOW_SIZE_CUSTOM] = "Другой",
     [UI_MENU_WINDOWED_ONLY] = "Доступно только в оконном режиме",
+    [UI_MENU_RAIDERS_WIDE_SETS] = "Задаётся ультраширокой настройкой",
     [UI_MENU_PRESENT] = "Вывод кадров", [UI_MENU_PRESENT_DESC] = "Как готовые кадры попадают на экран.",
     [UI_MENU_PRESENT_MAILBOX] = "Mailbox", [UI_MENU_PRESENT_VSYNC] = "Вертикальная синхронизация",
     [UI_MENU_PRESENT_IMMEDIATE] = "Без ожидания",
@@ -414,7 +416,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                                  "при 1080p и 1920 × 1080 выше. Чем выше, тем больше видеопамяти и времени GPU.",
     [UI_MENU_RAIDERS_WIDE] = "Ультраширокий экран",
     [UI_MENU_RAIDERS_WIDE_DESC] = "Расширяет изображение и обзор камеры для экрана 21:9 или 32:9: игра рисует от 2560 "
-                                  "× 1080 до 3840 × 1600 (21:9) или от 3072 × 864 до 3840 × 1080 (32:9), а окно или "
+                                  "× 1080 до 3840 × 1620 (21:9) или от 3072 × 864 до 3840 × 1080 (32:9), а окно или "
                                   "экран масштабирует картинку; большие размеры дольше рисуются. Интерфейс сохраняет "
                                   "пропорции в центральной области 16:9. Пока включено, заменяет «Разрешение». "
                                   "Применяется после перезапуска.",
@@ -707,6 +709,7 @@ static const char *const text_ko[UI_TEXT_COUNT] = {
     [UI_MENU_WINDOW_SIZE] = "창 크기", [UI_MENU_WINDOW_SIZE_DESC] = "전체 화면이 아닐 때 게임 창의 크기입니다.",
     [UI_MENU_WINDOW_SIZE_CUSTOM] = "사용자 지정",
     [UI_MENU_WINDOWED_ONLY] = "창 모드에서만 사용할 수 있습니다",
+    [UI_MENU_RAIDERS_WIDE_SETS] = "울트라와이드 설정을 따릅니다",
     [UI_MENU_PRESENT] = "화면 출력 방식", [UI_MENU_PRESENT_DESC] = "완성된 프레임이 화면에 표시되는 방식입니다.",
     [UI_MENU_PRESENT_MAILBOX] = "메일박스", [UI_MENU_PRESENT_VSYNC] = "수직 동기화", [UI_MENU_PRESENT_IMMEDIATE] = "즉시",
     [UI_MENU_PRESENT_IN_USE] = "사용 중: %s",
@@ -743,7 +746,7 @@ static const char *const text_ko[UI_TEXT_COUNT] = {
                                  "1920 x 1080, 2560 x 1440 또는 3840 x 2160, 휴대 모드는 1080p에서 1280 x 720, 그 이상에서 "
                                  "1920 x 1080입니다. 높을수록 비디오 메모리와 GPU 시간이 더 필요합니다.",
     [UI_MENU_RAIDERS_WIDE] = "울트라와이드",
-    [UI_MENU_RAIDERS_WIDE_DESC] = "21:9 또는 32:9 화면에 맞게 화면과 카메라 시야를 넓힙니다. 게임은 2560 x 1080~3840 x 1600(21:9) 또는 3072 x "
+    [UI_MENU_RAIDERS_WIDE_DESC] = "21:9 또는 32:9 화면에 맞게 화면과 카메라 시야를 넓힙니다. 게임은 2560 x 1080~3840 x 1620(21:9) 또는 3072 x "
                                   "864~3840 x 1080(32:9)로 렌더링하고 창이나 화면이 이를 확대/축소합니다. 큰 크기일수록 GPU 부담이 커집니다. HUD는 가운데 "
                                   "16:9 영역에서 비율을 유지합니다. 켜져 있는 동안 해상도 설정을 대신합니다. 재시작해야 적용됩니다.",
     [UI_MENU_UPSCALER] = "창 크기에 맞춘 확대",

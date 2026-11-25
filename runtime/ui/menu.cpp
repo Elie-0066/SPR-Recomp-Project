@@ -777,14 +777,17 @@ static void tab_screen(float scale) {
     opt_group(UI_MENU_GRAPHICS);
     if (rt_game_version) row_render_scale();   // TotK only: Bananza's and Raiders' 3D size is the game's own
     if (raiders()) {   // ov_system.c ov_graphics_scale: the display class the game sizes its output for
+        // a wide size replaces the class (except handheld, where raiders_wide_decide leaves it off)
+        if (strcmp(cfg_value("TOTK_RAIDERS_WIDE"), "off") && strcmp(cfg_value("TOTK_OPERATION_MODE"), "handheld"))
+            opt_disable_next(UI_MENU_RAIDERS_WIDE_SETS);
         static const char *const vals[] = {"1080p", "1440p", "2160p"};
         static const char *const names[] = {"1080p", "1440p", "4K (2160p)"};
         opt_choice_list("TOTK_RAIDERS_RES", UI_MENU_RAIDERS_RES, vals, names, 3, UI_MENU_RAIDERS_RES_DESC);
         // resolution.c raiders_wide_init: a wide output in the game's own resolution table, the cameras widened
-        static const char *const wide_vals[] = {"off", "21:9", "3440x1440", "3840x1600", "32:9", "3840x1080"};
+        static const char *const wide_vals[] = {"off", "21:9", "3440x1440", "3840x1600", "3840x1620", "32:9", "3840x1080"};
         const char *wide_names[] = {menu_text(UI_MENU_OFF), "21:9 (2560 x 1080)", "21:9 (3440 x 1440)",
-                                    "21:9 (3840 x 1600)", "32:9 (3072 x 864)", "32:9 (3840 x 1080)"};
-        opt_choice_list("TOTK_RAIDERS_WIDE", UI_MENU_RAIDERS_WIDE, wide_vals, wide_names, 6, UI_MENU_RAIDERS_WIDE_DESC);
+                                    "21:9 (3840 x 1600)", "21:9 (3840 x 1620)", "32:9 (3072 x 864)", "32:9 (3840 x 1080)"};
+        opt_choice_list("TOTK_RAIDERS_WIDE", UI_MENU_RAIDERS_WIDE, wide_vals, wide_names, 7, UI_MENU_RAIDERS_WIDE_DESC);
     }
     static const UiTextId up[] = {UI_MENU_UPSCALER_FSR, UI_MENU_UPSCALER_BILINEAR};
     opt_choice("TOTK_UPSCALER", UI_MENU_UPSCALER, up, 2, UI_MENU_UPSCALER_DESC);
