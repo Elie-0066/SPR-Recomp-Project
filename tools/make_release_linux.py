@@ -685,9 +685,8 @@ def main():
     build_sysroot(out, sysroot, used_sysroot_files(out, llvm, sysroot, rtlib_build, rtlib))
     build_python(out, llvm, sysroot)
     mr.build_sources(out)
-    # recomplauncher.json names the Windows folder's python.exe and spr-recomp.exe: RecompLauncher sets the Windows
-    # zip up, not the AppImage
-    (out / 'recomplauncher.json').unlink(missing_ok=True)
+    # mr.build_sources has copied recomplauncher.json to the AppDir root, where RecompLauncher reads it from the
+    # AppImage. Its program lists name the Linux python/bin/python3 and game/spr-recomp after the Windows programs.
     collect_licenses(out, sysroot)
     build_entry(out)
     mr.check_folder(out)
