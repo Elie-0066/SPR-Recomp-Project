@@ -35,7 +35,7 @@ static const char *const known[] = {
     "BIND_LSTICK_RIGHT", "BIND_LSTICK_UP", "BIND_MINUS",
     "BIND_PLUS", "BIND_R", "BIND_RCLICK", "BIND_RIGHT", "BIND_RSTICK_DOWN", "BIND_RSTICK_LEFT", "BIND_RSTICK_RIGHT", "BIND_RSTICK_UP",
     "BIND_SKIP", "BIND_STATS", "BIND_UP", "BIND_X", "BIND_Y",
-    "BIND_ZL", "BIND_ZR", "BLOCK_VIEWS_3D", "CLOTH_REALTIME", "CUBE_BLOCK_VIEWS", "COLOR_BRIGHTNESS", "COLOR_CONTRAST", "COLOR_GAMMA", "COLOR_PRESET", "COLOR_SATURATION", "CORE_DIAG", "CRIT", "CRUMB_BIND", "CRIT_OUT", "DESC_TEMPLATE", "DEVICE_PROFILE", "DRAW_PROFILE", "DUMP", "DUMP_BUF", "DUMP_DIR", "DUMP_LOG", "DUMP_MIN_DRAWS", "DUMP_PAIR", "DUMP_SKIP_RUNS", "DUMP_TEX", "DUMP_UBO", "DUMP_VBUF", "DYN_UBO",
+    "BIND_ZL", "BIND_ZR", "BLOCK_VIEWS_3D", "BOOT_SCREEN", "CLOTH_REALTIME", "CUBE_BLOCK_VIEWS", "COLOR_BRIGHTNESS", "COLOR_CONTRAST", "COLOR_GAMMA", "COLOR_PRESET", "COLOR_SATURATION", "CORE_DIAG", "CRIT", "CRUMB_BIND", "CRIT_OUT", "DESC_TEMPLATE", "DEVICE_PROFILE", "DRAW_PROFILE", "DUMP", "DUMP_BUF", "DUMP_DIR", "DUMP_LOG", "DUMP_MIN_DRAWS", "DUMP_PAIR", "DUMP_SKIP_RUNS", "DUMP_TEX", "DUMP_UBO", "DUMP_VBUF", "DYN_UBO",
     "EXEFS", "EXPERIMENTAL_GEOMETRY", "FEEDBACK", "FIXED_STEP", "FIX_C0", "FIX_INDIRECT_RESET", "FIX_SCREEN_UV", "FIX_VS_FAULT", "FIX_ZERO", "FLIGHT", "FLIGHT_AT", "FLIGHT_DIR", "FLIGHT_FRAMES", "FLIGHT_SPIKE_MS",
     "FLIGHT_THUMBS", "FMZ", "FMZ_SEL", "FOV", "FOV_PATCH", "FPS60", "FPS_LIMIT", "FRAME_GEN", "FREEZE_IDLE", "FREE_CORES", "FULLSCREEN", "GPL", "GPL_DRAW_BUILD", "GPU",
     "GPU_INDEX", "GPU_NAME", "HDR", "HDR_GAME_NITS", "HDR_NATIVE", "HDR_PEAK_NITS", "HDR_SHOULDER", "HDR_TRACE", "HDR_UI_NITS", "HIGHFPS_FIX", "HOST_PROPS_CACHE", "INPUT", "INPUT_RECORD", "INPUT_SCRIPT", "LANG", "LIB_PREBUILD",
@@ -50,14 +50,14 @@ static const char *const known[] = {
     "SHADER_MEMO", "SHARED_FONTS", "SHARPNESS", "SHOTS", "SHOTS_DIR", "SHOTS_FULL", "SLEEP_SPIN_US", "SMAA", "SPEED_PROBE", "SPIN", "SPIN_HANDOFF_US", "SPLIT_DRAWS", "SPLIT_US", "STICK_DEADZONE", "SVC_SLOW", "SWKBD_ANSWER",
     "SWKBD_TEST", "TEST_PAD", "TEST_PREPARE_SHADERS", "TEX_ALIAS", "TEX_HASH", "TEX_MEMO", "TEX_VRAM_PRESSURE", "TIMER_1MS", "REC_BATCH", "TRACE", "UBO_SNAPSHOT", "UPSCALER", "VK_DYN_A2C", "VK_DYN_VERTEX", "VK_NO_FLOAT64",
     "VK_PRESENT", "VK_RECORDER", "VK_SSBO_ALIGN", "VK_SUBGROUP", "VK_SUBGROUP_PIN", "VK_VALIDATION", "VOLUME", "VRAM_HEADROOM", "VS_OUTS",
-    "ULTRAWIDE", "HUD_POSITION", "WB_ASYNC", "WB_EXACT", "WB_FENCE_LIMIT", "WINDOW_MODE", "WINDOW_SIZE", "XLATE", "XLATE_ID", "XLATE_PROCS", "ZSTD_CHECK", "ZSTD_NATIVE",
+    "ULTRAWIDE", "HUD_POSITION", "WB_ASYNC", "WB_EXACT", "WB_FENCE_LIMIT", "WINDOW_MODE", "WINDOW_NOFOCUS", "WINDOW_POS", "WINDOW_SIZE", "XLATE", "XLATE_ID", "XLATE_PROCS", "ZSTD_CHECK", "ZSTD_NATIVE",
 };
 
 // The totk.ini section a key cfg_set may write goes to when the file lacks it (totk.ini.example's sections).
 static const struct { const char *key, *section; } sections[] = {
     {"FPS_LIMIT", "frame rate"}, {"FPS60", "frame rate"},
     {"REALTIME", "frame rate"}, {"CLOTH_REALTIME", "frame rate"}, {"HIGHFPS_FIX", "frame rate"},
-    {"FULLSCREEN", "display"}, {"WINDOW_MODE", "display"}, {"WINDOW_SIZE", "display"}, {"PERF_OVERLAY", "display"}, {"VK_PRESENT", "display"},
+    {"FULLSCREEN", "display"}, {"WINDOW_MODE", "display"}, {"WINDOW_SIZE", "display"}, {"WINDOW_POS", "display"}, {"WINDOW_NOFOCUS", "display"}, {"PERF_OVERLAY", "display"}, {"VK_PRESENT", "display"},
     {"GPU_INDEX", "display"}, {"OUTPUT_RES", "display"}, {"RENDER_SCALE", "display"}, {"RAIDERS_RES", "display"}, {"RAIDERS_WIDE", "display"}, {"UPSCALER", "display"},
     {"ULTRAWIDE", "display"}, {"HUD_POSITION", "display"},
     {"SHARPNESS", "display"}, {"SMAA", "display"}, {"FRAME_GEN", "display"}, {"ASPECT", "display"}, {"FOV", "display"}, {"COLOR_PRESET", "display"},
@@ -78,7 +78,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"ASYNC_PREEMPT", "performance"}, {"REPLAY_ASYNC", "performance"}, {"FREE_CORES", "performance"},
     {"TIMER_1MS", "performance"}, {"PIPE_WAIT", "performance"}, {"PIPE_SKIP", "performance"},
     {"LIB_PREBUILD", "performance"}, {"LIB_PREBUILD_THREADS", "performance"}, {"PIPE_PREBUILD", "performance"},
-    {"PREWARM_XLATE", "performance"}, {"GPL", "performance"}, {"ASTC", "performance"}, {"MEMORY", "performance"},
+    {"PREWARM_XLATE", "performance"}, {"BOOT_SCREEN", "performance"}, {"GPL", "performance"}, {"ASTC", "performance"}, {"MEMORY", "performance"},
     {"EXPERIMENTAL_GEOMETRY", "performance"}, {"NATIVE_GS", "performance"},
     {"REC_BATCH", "performance"},
     {"TEX_ALIAS", "performance"}, {"TEX_VRAM_PRESSURE", "performance"}, {"ASTC_BC", "performance"}, {"LOD_GUARD", "performance"}, {"FIX_C0", "performance"}, {"FIX_INDIRECT_RESET", "performance"}, {"FIX_VS_FAULT", "performance"}, {"FIX_ZERO", "performance"}, {"FIX_SCREEN_UV", "performance"}, {"LIST_RESTART", "performance"},
@@ -86,7 +86,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"TEX_HASH", "performance"}, {"ZSTD_NATIVE", "performance"}, {"ZSTD_CHECK", "performance"}, {"MVK_UPSCALE_BLIT", "performance"}, {"RAIDERS_SKIP_880", "performance"},
     {"PUSH_SKIP", "performance"}, {"SPLIT_DRAWS", "performance"}, {"SPLIT_US", "performance"}, {"VK_VALIDATION", "performance"},
     {"VK_DYN_VERTEX", "performance"}, {"VK_DYN_A2C", "performance"}, {"VK_SUBGROUP_PIN", "performance"},
-    {"TRACE", "diagnostics"}, {"MEM_REPORT", "diagnostics"}, {"FLIGHT", "diagnostics"}, {"FLIGHT_SPIKE_MS", "diagnostics"},
+    {"TRACE", "diagnostics"}, {"MEM_REPORT", "diagnostics"}, {"FLIGHT", "diagnostics"}, {"DUMP_MIN_DRAWS", "diagnostics"}, {"FLIGHT_SPIKE_MS", "diagnostics"},
     {"WB_FENCE_LIMIT", "diagnostics"}, {"WB_EXACT", "diagnostics"}, {"NX2_READ_NOWAIT", "diagnostics"},
     {"NVN2_MODE_TRACE", "diagnostics"}, {"HDR_TRACE", "diagnostics"}, {"HDR_SHOULDER", "diagnostics"},
     {"NVN2_MODE_TRACE_START_MS", "diagnostics"}, {"NVN2_MODE_TRACE_DURATION_MS", "diagnostics"},

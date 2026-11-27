@@ -91,6 +91,9 @@ static uint32_t *spv_override(const uint32_t *w,uint64_t words,uint64_t *out_n) 
 // The crash capture's copy of each final module (vk_pipeline_crash_dump) is not part of this contract.
 static void held_add(const GfxShader *src,const uint32_t *w,uint64_t words) {(void)src;(void)w;(void)words;}
 #define HELD_BUILD(call) (call)
+// The shader hash and origin only name the shader in spirv_fix_query_extract's log line.
+uint64_t gfx_shader_spirv_fnv(const GfxShader *s) {(void)s;return 0;}
+uint64_t gfx_shader_origin(const GfxShader *s) {(void)s;return 0;}
 '''
     names = ['static uint64_t fnv(', 'static VkBlendFactor blend_factor(', 'static VkBlendOp blend_op(',
              'static VkPolygonMode polygon_mode(', 'VkPrimitiveTopology vk_pipeline_topology(',
@@ -102,7 +105,7 @@ static void held_add(const GfxShader *src,const uint32_t *w,uint64_t words) {(vo
     rewrite = (ROOT / 'runtime/spirv_rewrite.c').read_text()
     rewrites = ['uint32_t *spirv_rebind(', 'uint32_t *spirv_set(', 'uint32_t *spirv_dual_source(',
                 'uint32_t *spirv_alpha_test(', 'uint32_t *spirv_add_outputs(', 'uint32_t *spirv_fixup_linked(',
-                'uint32_t *spirv_fixup(', 'int spirv_uses_subgroup_ops(']
+                'uint32_t *spirv_fixup(', 'uint32_t *spirv_fix_query_extract(', 'int spirv_uses_subgroup_ops(']
     prefix += '\n'.join(interface.function(rewrite, name) for name in rewrites) + '\n'
     prefix += interface.function((ROOT / 'runtime/gfx_spirv.c').read_text(), 'uint32_t *gfx_spirv_final(') + '\n'
     prefix += '\n'.join(interface.function(source, name) for name in names)
