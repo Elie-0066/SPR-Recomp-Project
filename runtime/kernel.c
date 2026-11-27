@@ -1611,10 +1611,23 @@ void kern_run_on_guest_main(void (*fn)(Cpu *c)) {
 // The OS timer ends a wait late by up to PLAT_WAIT_LATE_NS (Windows' high-resolution waitable timer: 0.3-0.5 ms; the
 // SDK's 20 us polling sleeps, main thread and job workers, about 1.5 per frame each, took 460-515 us). Sleeps up to
 // twice that spin on the clock instead (1 ms on Windows, 120 us on Linux); the virtual core is already given up.
+// Linux could sleep on the timer from 0 up: with the 1 us timer slack (TOTK_TIMER_1MS, default on) a 20 us SleepThread
+// took 24.4 us on average (Fedora 44, 7800X3D), and Splatoon Raiders' main thread and SDK job workers poll with ~20
+// SleepThread(20 us) a frame each, so spinning them costs ~2.2 ms of CPU a frame. But with TOTK_SLEEP_SPIN_US=0 the
+// headless runs showed whole-screen one-frame lighting flashes (sunlight missing) in the hub dialogue that the spinning
+// default never shows: the changed timing exposes a CPU/GPU data race (per-frame data arriving after the submit that
+// reads it), to be fixed first. TOTK_SLEEP_SPIN_US=<us> sets the threshold for experiments.
 #define SLEEP_SPIN_NS (2 * PLAT_WAIT_LATE_NS)
+static int64_t g_sleep_spin_ns = -1;   // TOTK_SLEEP_SPIN_US overrides SLEEP_SPIN_NS (0: every sleep on the OS timer)
 static void sleep_ns(RtThread *t, int64_t ns) {
     (void)t;
-    if (ns <= SLEEP_SPIN_NS) {
+    if (g_sleep_spin_ns < 0) {
+        const char *e = cfg_get("TOTK_SLEEP_SPIN_US");
+        int64_t v = e && *e ? atoll(e) * 1000 : (int64_t)SLEEP_SPIN_NS;
+        g_sleep_spin_ns = v < 0 ? 0 : v;
+        rt_log("kernel: guest sleeps up to %lld us spin on the clock", (long long)(g_sleep_spin_ns / 1000));
+    }
+    if (ns <= g_sleep_spin_ns) {
         uint64_t end = kern_now_ns() + (uint64_t)ns;
         while (kern_now_ns() < end) plat_pause();
         return;
