@@ -29,6 +29,9 @@ uint32_t *spirv_add_outputs(const uint32_t *w, uint64_t n, uint32_t missing, con
 uint32_t *spirv_fixup_linked(const uint32_t *w, uint64_t n, uint64_t *out_n, int geometry_chain,
                              uint32_t clip_cull_limit);
 uint32_t *spirv_fixup(const uint32_t *w, uint64_t n, uint64_t *out_n, uint32_t clip_cull_limit);   // geometry_chain 0
+// Image size queries read past their components (invalid SPIR-V that crashes RADV) read the constant 1 instead; NULL
+// when there are none. *fixed: how many reads were rewritten.
+uint32_t *spirv_fix_query_extract(const uint32_t *w, uint64_t n, uint64_t *out_n, unsigned *fixed);
 // 1 when the module declares a GroupNonUniform* or SubgroupBallot-style capability.
 int spirv_uses_subgroup_ops(const uint32_t *w, uint64_t words);
 // NVIDIA's fused-multiply-zero rule for float OpFMul and Fma; vertex_only leaves other stages alone.
