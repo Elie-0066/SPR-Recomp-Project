@@ -154,7 +154,9 @@ licenses/, THIRD_PARTY_NOTICES.md, LICENSE, LICENSE-MIT, dkb.ini.example, VERSIO
   library once against a placeholder module layout (`placeholder_gen`), so it needs no game files and runs in CI.
 - The AppImage is mounted read-only, so the setup works next to the install folder, in `<dest>/../.spr-setup`
   (`installer/raiders.py` main).
-- It carries no `recomplauncher.json`: RecompLauncher sets up the Windows zip.
+- `recomplauncher.json` sits at its root, so RecompLauncher sets the AppImage up too. The launcher runs
+  `python/bin/python3` itself, not `AppRun`, so the manifest's `prepare.env` sets `PYTHONDONTWRITEBYTECODE=1` as
+  `AppRun` does.
 - The game needs a Vulkan 1.3 driver. Linux 6.7 or later gives it the write watch of `runtime/platform/linux.c`
   (asynchronous userfaultfd write protection); on an older kernel it reports every watched range as written, which
   costs speed. The first AppImage was built in CI and checked with the window's selftest only; it has not been

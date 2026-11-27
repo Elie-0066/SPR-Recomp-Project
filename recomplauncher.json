@@ -9,7 +9,8 @@
     },
     "prepare": {
         "program": [
-            "python/python.exe"
+            "python/python.exe",
+            "python/bin/python3"
         ],
         "args": [
             "-m",
@@ -22,12 +23,16 @@
             "{install}/game",
             "--no-update-check"
         ],
+        "env": {
+            "PYTHONDONTWRITEBYTECODE": "1"
+        },
         "label": "Compiling the game on your PC (about 30 minutes)",
         "timeout": 7200
     },
     "start": {
         "program": [
-            "game/spr-recomp.exe"
+            "game/spr-recomp.exe",
+            "game/spr-recomp"
         ],
         "args": [
             "--boot"
