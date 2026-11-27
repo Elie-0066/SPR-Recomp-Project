@@ -954,7 +954,8 @@ uint64_t plat_mem_written(uint64_t addr, uint64_t n, uint64_t *pages, uint64_t m
 
 // One handler for the synchronous faults. A SIGSEGV whose page-fault error code has the write bit set goes to the
 // write-fault hook first (memory.c thaws a frozen region); a fault in this executable's code then goes to the crash
-// hook (main.c); anything else gets the default action. Runs on the thread's signal stack.
+// hook (main.c), which exits; one in a library (a GPU driver) goes to it too, to be logged, and then gets the default
+// action (a core dump). Runs on the thread's signal stack.
 static int (*fault_hook)(uint64_t addr);
 static void (*crash_fn)(const PlatCrash *c);
 
@@ -968,6 +969,14 @@ static void fault_handler(int sig, siginfo_t *si, void *uc) {
         PlatCrash c = {sig == SIGSEGV ? "access violation" : sig == SIGBUS ? "bus error"
                        : sig == SIGILL ? "illegal instruction" : "arithmetic exception",
                        (uint32_t)sig, rip, rip - (uintptr_t)self.dli_fbase, -1, 0};
+        if (sig == SIGSEGV || sig == SIGBUS)
+            c.access = (err & 16) ? 8 : (err & 2) ? 1 : 0, c.addr = (uint64_t)(uintptr_t)si->si_addr;
+        crash_fn(&c);
+    } else if (crash_fn && dladdr((void *)rip, &at) && at.dli_fname) {   // in a library (a GPU driver): log it too
+        PlatCrash c = {sig == SIGSEGV ? "access violation" : sig == SIGBUS ? "bus error"
+                       : sig == SIGILL ? "illegal instruction" : "arithmetic exception",
+                       (uint32_t)sig, rip, rip - (uintptr_t)at.dli_fbase, -1, 0};
+        c.module = at.dli_fname;
         if (sig == SIGSEGV || sig == SIGBUS)
             c.access = (err & 16) ? 8 : (err & 2) ? 1 : 0, c.addr = (uint64_t)(uintptr_t)si->si_addr;
         crash_fn(&c);

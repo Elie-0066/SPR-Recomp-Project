@@ -994,9 +994,9 @@ static VkDescriptorBufferInfo zero_info(uint64_t max) {
 // bind ops, index buffers, the draw command). The "other-ops" section also counts the time of dispatches and uniform
 // updates, and is divided by draws only. Time comes from the TSC (x86) and is scaled to nanoseconds against the
 // clock over each window. Off by default: one TSC read per mark.
-enum { DP_PASS, DP_SHADER, DP_PIPE, DP_STATE, DP_SIG, DP_UBO, DP_SSBO, DP_TEX, DP_SETS, DP_FEEDBACK, DP_VB, DP_TAIL,
+enum { DP_PASS, DP_SHADER, DP_FB_SCAN, DP_PIPE_PREP, DP_PIPE, DP_STATE, DP_SIG, DP_UBO, DP_SSBO, DP_TEX, DP_SETS, DP_FEEDBACK, DP_VB, DP_TAIL,
        DP_OPS, DP_N };
-static const char *const dp_name[DP_N] = {"pass", "shaders", "pipeline", "state", "bind-sig", "ubo", "ssbo", "textures",
+static const char *const dp_name[DP_N] = {"pass", "shaders", "fb-scan", "pipe-prep", "pipeline", "state", "bind-sig", "ubo", "ssbo", "textures",
                                           "sets", "feedback", "vertex-buffers", "tail", "other-ops"};
 static struct { int on, active; uint64_t t, ticks[DP_N], draws, ops, win_tk, win_ns; } DP = {-1};
 
@@ -2754,6 +2754,28 @@ static int shader_memo_on(void) {
 }
 
 static struct { int on, valid; VkPipeState s; const VkPipeInfo *info; } PM = {-1};
+// The pipelines of the last states seen, by a hash of the whole state (PMC; replay thread only). The memo above covers
+// a state that repeats from one draw to the next; frames alternate between a few hundred states, and each of those
+// built the cache key, hashed it and took the pipeline lock (vk_pipeline.c graphics). With this cache 85 % of the draws
+// that miss the memo hit, and the lookup went from ~290 to ~100 ns per draw (TOTK_DRAW_PROFILE, a desktop core). An
+// entry is what the memo would keep: the info of a pipeline that was found, not pending; the full state is compared on
+// a hash match. TOTK_PIPE_MEMO=0 turns it off with the memo.
+enum { PMC_N = 4096 };
+static struct { uint64_t h; const VkPipeInfo *info; VkPipeState s; } PMC[PMC_N];
+static uint64_t pmc_hits, pmc_misses;
+
+static uint64_t pstate_hash(const VkPipeState *s) {
+    const uint8_t *b = (const uint8_t *)s;
+    uint64_t h = 0x9e3779b97f4a7c15ull, w;
+    size_t i = 0;
+    for (; i + 8 <= sizeof *s; i += 8) {
+        memcpy(&w, b + i, 8);
+        h = (h ^ w) * 0xff51afd7ed558ccdull;
+        h ^= h >> 32;
+    }
+    for (; i < sizeof *s; i++) h = (h ^ b[i]) * 0x100000001b3ull;
+    return h ^ (h >> 29);
+}
 
 static int pipe_memo_on(void) {
     if (PM.on < 0) PM.on = cfg_bool("TOTK_PIPE_MEMO");
@@ -2924,6 +2946,7 @@ static int prepare_draw_impl(VkExec *ex, int prim, int32_t count, int restart) {
     if (!vs || (has_fs && !fs) || (want_gs && (!has_gs || !gs))) return 0;
     if (!geometry_feedback_safe(ex, vs, gs)) return 0;
     uint32_t fbl = feedback_prepare(ex, fs);
+    DP_MARK(DP_FB_SCAN);
     VkPipeState s = ex->pipe;
     s.vs = vs, s.fs = fs, s.gs = gs;
     s.feedback = (uint8_t)((fbl & 0xff ? 1 : 0) | (fbl & 0x100 ? 2 : 0));
@@ -2931,6 +2954,7 @@ static int prepare_draw_impl(VkExec *ex, int prim, int32_t count, int restart) {
     s.depth_minus_w = (uint8_t)(nvn_depth_minus_w() != 0);
     s.y_flip = 1;
     s.prim_restart = (uint8_t)(restart != 0);
+    DP_MARK(DP_PIPE_PREP);
     const VkPipeInfo *info = NULL;
     int pending;
     // A draw of at most 6 vertices over half the render area or more (a full-screen triangle or quad, a tile) waits for
@@ -2955,9 +2979,17 @@ static int prepare_draw_impl(VkExec *ex, int prim, int32_t count, int restart) {
     VkPipeline p;
     const char *why = NULL;
     uint64_t w0 = 0;
+    uint64_t ph = 0;
+    int pmc = -1;
     if (pipe_memo_on() && PM.valid && !memcmp(&PM.s, &s, sizeof s)) {
         info = PM.info, pending = 0;
         p = __atomic_load_n(&info->pipeline, __ATOMIC_ACQUIRE);
+    } else if (pipe_memo_on() && (ph = pstate_hash(&s), pmc = (int)(ph % PMC_N), PMC[pmc].info && PMC[pmc].h == ph) &&
+               !memcmp(&PMC[pmc].s, &s, sizeof s)) {
+        info = PMC[pmc].info, pending = 0;
+        p = __atomic_load_n(&info->pipeline, __ATOMIC_ACQUIRE);
+        PM.valid = 1, PM.s = s, PM.info = info;
+        pmc_hits++;
     } else {
         w0 = t0 ? t0 : wait_ms ? kern_now_ns() : 0;   // the clock is read only for draws that may wait
         p = vk_pipeline_graphics_async(&s, &info, &pending, wait_ms);
@@ -2973,7 +3005,13 @@ static int prepare_draw_impl(VkExec *ex, int prim, int32_t count, int restart) {
             p = vk_pipeline_graphics_async(&s, &info, &pending, ONESHOT_WAIT_MS);
         }
         PM.valid = !pending && p && info;
-        if (PM.valid) PM.s = s, PM.info = info;
+        if (PM.valid) {
+            PM.s = s, PM.info = info;
+            if (pmc >= 0) PMC[pmc].h = ph, PMC[pmc].info = info, PMC[pmc].s = s;
+        }
+        if (pmc >= 0 && ++pmc_misses % 20000 == 0)
+            rt_log("vk_exec: pipeline state cache: %llu hits, %llu misses", (unsigned long long)pmc_hits,
+                   (unsigned long long)pmc_misses);
     }
     uint64_t waited = w0 ? kern_now_ns() - w0 : 0;
     static int wait_logs;

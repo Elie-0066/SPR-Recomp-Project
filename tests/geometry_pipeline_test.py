@@ -88,6 +88,9 @@ static uint32_t *hdr_shoulder(const GfxShader *src,const uint32_t *w,uint64_t wo
 static uint32_t *nan_guard(const GfxShader *src,const uint32_t *w,uint64_t words,uint64_t *out_n) {(void)src;(void)w;(void)words;(void)out_n;return NULL;}
 static void spv_dump(const uint32_t *w,uint64_t words,const GfxShader *src) {(void)w;(void)words;(void)src;}
 static uint32_t *spv_override(const uint32_t *w,uint64_t words,uint64_t *out_n) {(void)w;(void)words;(void)out_n;return NULL;}
+// The crash capture's copy of each final module (vk_pipeline_crash_dump) is not part of this contract.
+static void held_add(const GfxShader *src,const uint32_t *w,uint64_t words) {(void)src;(void)w;(void)words;}
+#define HELD_BUILD(call) (call)
 '''
     names = ['static uint64_t fnv(', 'static VkBlendFactor blend_factor(', 'static VkBlendOp blend_op(',
              'static VkPolygonMode polygon_mode(', 'VkPrimitiveTopology vk_pipeline_topology(',
