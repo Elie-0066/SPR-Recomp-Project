@@ -1,0 +1,18 @@
+--- a/src/Ryujinx.Graphics.Shader/CodeGen/Spirv/Instructions.cs
++++ b/src/Ryujinx.Graphics.Shader/CodeGen/Spirv/Instructions.cs
+@@ -1517,6 +1517,15 @@
+                     dimensions++;
+                 }
+ 
++                // TOTK: a texture of unknown type is declared 2D, and the Maxwell TXQ may still read its depth or layer
++                // count (component 2). An OpCompositeExtract past the size vector is invalid SPIR-V: NVIDIA reads
++                // something, RADV's spirv_to_nir fails and the driver crashes (issue 39). A component the texture
++                // does not have reads 1, the depth of a 1D, 2D or cube texture. After NX2navi's 21eb3de (MIT).
++                if (texOp.Index >= dimensions)
++                {
++                    return new OperationResult(AggregateType.S32, context.Constant(context.TypeS32(), 1));
++                }
++
+                 SpvInstruction resultType = dimensions == 1 ? context.TypeS32() : context.TypeVector(context.TypeS32(), dimensions);
+ 
+                 SpvInstruction result;

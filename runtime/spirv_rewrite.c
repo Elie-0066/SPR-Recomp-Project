@@ -545,7 +545,8 @@ uint32_t *spirv_fix_query_extract(const uint32_t *w, uint64_t n, uint64_t *out_n
         if (i == fn_at)   // the new constants go last in the global section, after every type they use
             for (uint32_t k = 0; k < nt; k++) if (ones[k] >= bound)
                 o[on++] = 4u << 16 | SPV_OP_CONSTANT, o[on++] = types[k], o[on++] = ones[k], o[on++] = 1;
-        if (op == OP_COMPOSITE_EXTRACT && len == 5 && a[2] < bound && query[a[2]] && a[3] >= query[a[2]] && intt[a[0]]) {
+        if (op == OP_COMPOSITE_EXTRACT && len == 5 && a[2] < bound && query[a[2]] && a[3] >= query[a[2]] &&
+            a[0] < bound && intt[a[0]]) {
             uint32_t k = 0;
             while (types[k] != a[0]) k++;
             o[on++] = 4u << 16 | OP_COPY_OBJECT, o[on++] = a[0], o[on++] = a[1], o[on++] = ones[k];
