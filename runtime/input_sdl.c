@@ -22,6 +22,7 @@ static volatile uint8_t key_held[KEY_COUNT];
 static volatile int32_t esc_held, f8_held, focused;
 static volatile int32_t mouse_dx, mouse_dy;   // relative motion since the last ikb_mouse_take, whole counts
 static float rem_x, rem_y;                    // window thread: the fractions SDL reported beyond them
+static uint32_t capture_generation;
 static volatile int32_t captured;             // relative mouse mode is on
 enum { CUR_REL = 1, CUR_ESC = 2 };            // as input_win.c: released by Esc or a click elsewhere; by Esc
 static volatile int32_t cur_rel, cur_suspend, cur_pending;
@@ -130,6 +131,7 @@ static void cursor_apply(void) {
     plat_xchg32(&mouse_dx, 0);
     plat_xchg32(&mouse_dy, 0);
     rem_x = rem_y = 0;
+    if (want) __atomic_add_fetch(&capture_generation, 1, __ATOMIC_RELEASE);
     plat_xchg32(&captured, want);
 }
 
@@ -184,7 +186,7 @@ void input_sdl_event(const SDL_Event *e) {
     case SDL_EVENT_MOUSE_BUTTON_UP: {
         int down = e->type == SDL_EVENT_MOUSE_BUTTON_DOWN;
         int k = mouse_key(e->button.button);
-        if (k) key_held[k] = (uint8_t)down;
+        if (k && (!down || focused)) key_held[k] = (uint8_t)down;
         if (down && (cur_rel & CUR_REL)) plat_xchg32(&cur_rel, 0);   // a click in the window captures again
         break;
     }
@@ -215,7 +217,9 @@ void input_sdl_event(const SDL_Event *e) {
 // ---- input_wsys.h
 int ikb_foreground(void) { return focused != 0; }
 int ikb_down(int key) { return key > 0 && key < KEY_COUNT && key_held[key]; }
+int ikb_client_mouse_down(int key) { return !cur_suspend && ikb_down(key); }
 int ikb_escape(void) { return esc_held != 0; }
+uint32_t ikb_capture_generation(void) { return __atomic_load_n(&capture_generation, __ATOMIC_ACQUIRE); }
 int ikb_captured(void) { return captured != 0; }
 
 void ikb_mouse_take(int32_t *dx, int32_t *dy) {

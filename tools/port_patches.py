@@ -21,8 +21,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'recomp'))
 from nso import Nso  # noqa: E402
+from patches import bl_target, bl_word  # noqa: E402
 
-BL = 0x94000000
 WIN = 4
 
 
@@ -74,16 +74,6 @@ class Img:
         for k in range(2 * WIN + 1):
             ok &= m[k:n - 2 * WIN + k] == want[k]
         return [new.lo + 4 * (int(j) + WIN) for j in np.nonzero(ok)[0]]
-
-
-def bl_target(w, off):
-    return off + ((((w & 0x3FFFFFF) ^ 0x2000000) - 0x2000000) << 2)
-
-
-def bl_word(off, target):
-    d = (target - off) >> 2
-    assert -(1 << 25) <= d < (1 << 25) and (target - off) % 4 == 0
-    return BL | d & 0x3FFFFFF
 
 
 def parse(path):

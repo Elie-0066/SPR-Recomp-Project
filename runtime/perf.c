@@ -10,6 +10,7 @@
 #include "flight.h"
 #include "gfx.h"
 #include "host.h"
+#include "input.h"
 #include "nvn_mode_trace.h"
 #include "perfmon.h"
 #include "prof.h"
@@ -330,6 +331,7 @@ void perf_tl(const char *what, uint64_t a, uint64_t b) {
 }
 
 void perf_present(uint64_t frame) {
+    input_raiders_cursor_tick();
     static uint64_t last, sum, max, n, win_start, ab_b;
     __atomic_add_fetch(&presents, 1, __ATOMIC_RELAXED);
     static int64_t win_prev[PERF_CNT_N];

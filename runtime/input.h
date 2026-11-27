@@ -55,6 +55,14 @@ int input_mouse_direct(float degrees[2]);
 // Whether the direct camera sampled in the last two presented frames; expires activity when it stops updating.
 int input_mouse_direct_recent(void);
 
+// Raiders manual mouse orbit.
+int input_blocks_mouse(void);
+int input_raiders_available(void);
+int input_raiders_owns_cursor(void);
+void input_raiders_cursor_tick(void);
+void input_raiders_buttons(uint64_t buttons);  // most recent button state delivered to the game
+int input_raiders_orbit(uint64_t camera, float degrees[2]);  // returns whether mapped ZL was held at sampling
+
 // Rumble: SDL_RumbleGamepad on the open gamepad, low (heavy, left) and high (light, right) motor 0..65535 for ms
 // milliseconds. 1 if a gamepad with rumble took it. Callable from any thread.
 int input_rumble(uint16_t low, uint16_t high, uint32_t ms);

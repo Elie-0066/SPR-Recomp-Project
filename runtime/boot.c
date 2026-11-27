@@ -420,6 +420,7 @@ static void boot_main(void *arg) {
     ldr_load(rt_config()->exefs);
     rt_patches_init();
     dkb_camera_init();
+    raiders_camera_init();
     frame_step_init();
     res_init();
     cb_addr[0] = hostfn_register("<rtld loader_ready>", cb_loader_ready);

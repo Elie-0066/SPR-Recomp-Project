@@ -3,7 +3,7 @@
 The flow is Bananza's (installer/bananza.py), whose path checks, locks, translator step, host check and tool runner it
 reuses. What differs for this game:
 
-- The ExeFS has three modules, main, sdk and subsdk0, lifted whole and without patch sets. Update 65536
+- The ExeFS has three modules, main, sdk and subsdk0, lifted whole. Update 65536
   (tools/data/expected-raiders.json) is the version the project is developed and tested on. The other versions of
   tools/data/expected-raiders-*.json, and any other version whose main.npdm (or .nup package) carries the game's
   program id, are built too, with the warning warn.spr_version_experimental: nothing says the lifter or the runtime
@@ -538,8 +538,11 @@ class Lift(Step):
         gen = ctx.temp / 'gen'
         plain_outputs(ctx)
         gen.mkdir(parents=True, exist_ok=True)
-        run_tool(ctx, self.id, [ctx.layout.python, ctx.layout.recomp / 'gen.py', '--exefs', ctx.dest / 'exefs',
-                                '--out', gen, '--jobs', ctx.options.jobs])
+        cmd = [ctx.layout.python, ctx.layout.recomp / 'gen.py', '--exefs', ctx.dest / 'exefs',
+               '--out', gen, '--jobs', ctx.options.jobs, '--raiders-mouse']
+        run_tool(ctx, self.id, cmd)
+        if '#define RT_RAIDERS_PITCH_MAP ' not in (gen / 'patches.h').read_text(encoding='utf-8'):
+            ctx.reporter.warning('warn.spr_direct_mouse_unavailable')
         return {'outputs': B.tree_key(gen)}
 
 
