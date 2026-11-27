@@ -486,3 +486,78 @@ uint32_t *spirv_fmz(const uint32_t *w, uint64_t n, int vertex_only, uint64_t *ou
     free(comps), free(f32), free(nullc), free(need);
     return o;
 }
+
+// An image size query read past its components: OpCompositeExtract of an OpImageQuerySize(Lod) result with an index at
+// or past the result's component count. SPIR-V forbids it, and RADV's spirv_to_nir crashes on it instead of failing
+// (2026-11-20, vertex shader 92daffb9179bd416: the translator took a texture of unknown type as 2D, "无 PC 类型，按 2D",
+// while the Maxwell TXQ read the depth/layer component). Each such extract becomes a copy of the constant 1, what Maxwell
+// returns for the depth of a texture with one layer, which also keeps "layers - 1" clamps at 0. NULL when the module has
+// none; *fixed counts the extracts rewritten.
+uint32_t *spirv_fix_query_extract(const uint32_t *w, uint64_t n, uint64_t *out_n, unsigned *fixed) {
+    enum { OP_COMPOSITE_EXTRACT = 81, OP_COPY_OBJECT = 83, OP_IMAGE_QUERY_SIZE_LOD = 103, OP_IMAGE_QUERY_SIZE = 104,
+           MAXT = 8 };
+    *fixed = 0;
+    if (n < 5) return NULL;
+    uint32_t bound = w[3];
+    uint8_t *count = calloc(bound, 1), *query = calloc(bound, 1), *intt = calloc(bound, 1);
+    uint32_t types[MAXT], ones[MAXT], nt = 0, bad = 0;
+    uint64_t fn_at = 0;
+    uint32_t *o = NULL;
+    if (!count || !query || !intt) goto out;
+    for (uint64_t i = 5; i < n;) {   // types, the queries, the existing int constants 1, the bad extracts
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (!len || i + len > n) goto out;
+        const uint32_t *a = w + i + 1;
+        if (op == SPV_OP_TYPE_INT && len == 4 && a[0] < bound && a[1] == 32) intt[a[0]] = 1, count[a[0]] = 1;
+        else if (op == SPV_OP_TYPE_VECTOR && len == 4 && a[0] < bound && a[1] < bound && intt[a[1]]) count[a[0]] = (uint8_t)a[2];
+        else if ((op == OP_IMAGE_QUERY_SIZE_LOD || op == OP_IMAGE_QUERY_SIZE) && len >= 4 && a[0] < bound && a[1] < bound)
+            query[a[1]] = count[a[0]];
+        else if (op == SPV_OP_FUNCTION && !fn_at) fn_at = i;
+        else if (op == OP_COMPOSITE_EXTRACT && len == 5 && a[2] < bound && query[a[2]] && a[3] >= query[a[2]] &&
+                 a[0] < bound && intt[a[0]]) {
+            uint32_t k = 0;
+            while (k < nt && types[k] != a[0]) k++;
+            if (k == nt) {
+                if (nt == MAXT) goto out;
+                types[nt] = a[0], ones[nt] = 0, nt++;
+            }
+            bad++;
+        }
+        i += len;
+    }
+    if (!bad || !fn_at) goto out;
+    for (uint64_t i = 5; i < fn_at;) {   // reuse an OpConstant <type> 1
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (op == SPV_OP_CONSTANT && len == 4 && w[i + 3] == 1)
+            for (uint32_t k = 0; k < nt; k++) if (types[k] == w[i + 1] && !ones[k]) ones[k] = w[i + 2];
+        i += len;
+    }
+    uint32_t nb = bound, added = 0;
+    for (uint32_t k = 0; k < nt; k++) if (!ones[k]) ones[k] = nb++, added++;
+    o = malloc((n + 4 * added) * 4);
+    if (!o) goto out;
+    memcpy(o, w, 5 * 4);
+    o[3] = nb;
+    uint64_t on = 5;
+    for (uint64_t i = 5; i < n;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        const uint32_t *a = w + i + 1;
+        if (i == fn_at)   // the new constants go last in the global section, after every type they use
+            for (uint32_t k = 0; k < nt; k++) if (ones[k] >= bound)
+                o[on++] = 4u << 16 | SPV_OP_CONSTANT, o[on++] = types[k], o[on++] = ones[k], o[on++] = 1;
+        if (op == OP_COMPOSITE_EXTRACT && len == 5 && a[2] < bound && query[a[2]] && a[3] >= query[a[2]] && intt[a[0]]) {
+            uint32_t k = 0;
+            while (types[k] != a[0]) k++;
+            o[on++] = 4u << 16 | OP_COPY_OBJECT, o[on++] = a[0], o[on++] = a[1], o[on++] = ones[k];
+            (*fixed)++;
+        } else {
+            memcpy(o + on, w + i, len * 4);
+            on += len;
+        }
+        i += len;
+    }
+    *out_n = on;
+out:
+    free(count), free(query), free(intt);
+    return o;
+}

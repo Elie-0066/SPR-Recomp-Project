@@ -168,6 +168,16 @@ uint32_t *gfx_spirv_final(const GfxShader *src, const uint32_t *w, uint64_t word
     uint32_t *fixed = geometry_chain ? spirv_fixup_linked(w, words, &fixed_n, 1, clip_cull_limit)
                                      : spirv_fixup(w, words, &fixed_n, clip_cull_limit);
     if (fixed) w = fixed, words = fixed_n;
+    unsigned qx = 0;
+    uint64_t qx_n = 0;
+    uint32_t *query_fixed = spirv_fix_query_extract(w, words, &qx_n, &qx);
+    if (query_fixed) {
+        rt_log("vk: %s %016llx (origin %016llx): %u image size read(s) past the query's components now read 1",
+               gfx_shader_stage(src) == GFX_STAGE_VS ? "vs" : gfx_shader_stage(src) == GFX_STAGE_FS ? "fs" : "shader",
+               (unsigned long long)gfx_shader_spirv_fnv(src), (unsigned long long)gfx_shader_origin(src), qx);
+        free(fixed);
+        fixed = query_fixed, w = query_fixed, words = qx_n;
+    }
     uint32_t *suv = NULL;
     if (screen_uv_stage(src)) {
         uint64_t suv_n = 0;
