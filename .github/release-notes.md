@@ -1,26 +1,24 @@
-## v0.2.2: gyro through Steam, a 5120x2160 ultrawide shape and experimental shader fixes
+## v0.2.3: a fix for the AMD crash during combat, a loading screen at boot and faster draws
 
 # **Don't forget to follow me on X for news about the next releases: https://x.com/Lyriiiie**
 
 
 SPR Recomp: a static recompilation of *Splatoon Raiders* (Switch 2) to a native Windows and Linux executable with a Vulkan renderer. It is an experimental fork of DKB Recomp (itself built on TotK Recomp).
 
-## New in 0.2.2
+## New in 0.2.3
 
 Each entry says whether it is **tested** or **experimental**. Experimental means that the code is in, but the maintainer has no hardware or setup to confirm it: please report whether it works for you.
 
-- **Gyro when the game is started from Steam** (issue #38) - **experimental**, not yet tried with a real controller under Steam here. Steam Input hides the real controller and shows a virtual one, usually without motion sensors. Buttons and sticks still come from Steam's virtual gamepad, so your remapping holds; the gyro is read from the real controller behind it. Your Steam layout must bind the gyro to something (for example *As Mouse*, with an activation button you do not use), or Steam can switch the gyro off. The fix comes from TotK Recomp (patch by St5sz2Jk).
-- **Ultrawide 3840x1620** (issue #13) - **tested** up to the intro screens on an RTX 3050, not in a mission. It is the exact shape of a 5120x2160 screen. The *Ultrawide* row changes the picture the game draws and needs a restart.
-- **Resolution is greyed out while Ultrawide is on** (issue #35). It had no effect then, and the menu now says so. The bars beside some of the game's own menus remain: those menus are 16:9, and *Fit picture to window* cannot stretch them.
-- **Shader translation fixes from DKB Recomp** - **experimental** for the problems below. They build, and all 3,690 of the game's shader stages translate, but the effect has not been confirmed on AMD or Intel:
-  - some 64-bit stores of zero wrote an address instead, and some subgroup operations ran in the wrong place. This *may* help with the AMD crash in level 3 (issue #28) and the flickering grass on Intel Arc (issue #37);
-  - a shader loop that could hang the GPU, seen on Intel Arc, now always ends.
+- **AMD: the crash during combat is fixed** (issue #39) - **tested** on Linux by two players, on an RX 9060 XT and an RX 7800 XT (Mesa RADV): the mission that crashed every time (the treasure mission with Big Man, in the second stage) now plays through. Some shaders asked a texture for a size it does not have, and the translator wrote that as invalid shader code. NVIDIA ignored it; AMD's Linux driver crashed while it built the shader. The fix is in the shader code itself, so it applies on Windows and Linux and on every GPU. Whether AMD's Windows driver also crashed on it is not known. The fix is in two places: the translator no longer writes that code (after NX2navi, thanks to weluvjr, DieMitchell and tangerineturtle1), and the game also repairs shaders already in your shader cache (thanks to azlekayn). It does not fix the AMD crash in level 3 (issue #28), which is a different problem.
+- **A loading screen at boot** - **tested** on Linux with an AMD GPU and on Windows with an RTX 3050. The first launch after an update translates the shaders and builds the pipelines before the game starts; the window used to stay black meanwhile, so it looked hung. It now shows the progress with an estimate of the time left. Thanks to azlekayn.
+- **Draws find their pipeline faster** - **tested** on Linux with an AMD GPU and on Windows with an RTX 3050: a cache of the recent pipeline states cuts the CPU time spent per draw. Thanks to azlekayn.
+- **Linux: a crash inside the GPU driver is logged** with the shader the driver was building, and that shader is written to the `logs` folder as a `.spv` file you can attach to an issue (it holds no game images). On Windows, a crash inside the driver is not captured yet. Thanks to azlekayn.
 
-**The first launch after the update translates the shaders again.** It takes a few minutes, once.
+**The first launch after the update translates the shaders again.** It takes a few minutes, once; the new loading screen shows it.
 
-**Not fixed yet:** the horizontal streaks and washed-out sky and water on AMD (issues #14 and #29). The cause is not known. If you have an AMD GPU, a frame dump helps most: start the game with `TOTK_DUMP=key` set the same way as the variables in *Reporting a bug*, press F9 while the glitch is on screen, and attach `passes.txt` from the `dump` folder. **Do not attach the PNG files or any other dump file**: they can hold game images.
+**Not fixed yet:** the AMD crash in level 3 (issue #28) and the horizontal streaks and washed-out sky and water on AMD (issues #14 and #29). The causes are not known. If you have an AMD GPU, a frame dump helps most: start the game with `TOTK_DUMP=key` set the same way as the variables in *Reporting a bug*, press F9 while the glitch is on screen, and attach `passes.txt` from the `dump` folder. **Do not attach the PNG files or any other dump file**: they can hold game images.
 
-Everything from 0.2.1 (the Linux and SteamOS setup fixes, the self-contained install folder) is in this release too.
+Everything from 0.2.2 (the gyro through Steam, the 5120x2160 ultrawide shape, the shader fixes from DKB Recomp) is in this release too.
 
 ## Downloads
 
