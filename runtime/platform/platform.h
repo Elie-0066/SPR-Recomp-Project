@@ -238,6 +238,9 @@ typedef struct {
     uint64_t addr;             // its address when access >= 0
     int nframes;               // abort and invalid parameter: return addresses in this executable, innermost first
     uintptr_t frames[16];      // (rip is frames[0]); 0 for a fault, whose rip is exact
+    const char *module;        // a fault outside this executable (a driver): that library's path, offset its offset;
+                               // the hook logs and returns, and the default action follows (a core dump). NULL for a
+                               // fault in this executable, and always on Windows and macOS (zero-initialised).
 } PlatCrash;
 void plat_crash_hook(void (*fn)(const PlatCrash *c));
 int plat_mem_read(uint64_t addr, void *out, size_t n);    // copies n bytes, 0 instead of faulting on unmapped memory

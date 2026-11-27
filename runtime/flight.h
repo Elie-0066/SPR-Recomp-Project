@@ -9,6 +9,9 @@
 extern int flight_on;   // TOTK_FLIGHT=1, set once by flight_init before the first present
 
 void flight_init(void);   // prof_start calls it
+// The crash handler (main.c): the timing table of the last frames, written at once on the calling thread, no
+// thumbnails. Nothing without TOTK_FLIGHT=1.
+void flight_crash_dump(void);
 // perf_present, once per present on the render thread: the interval since the previous present, the render thread's
 // blocked time per PERF_* kind in this frame, and the running PERF_CNT_* totals.
 void flight_frame(uint64_t frame, uint64_t now_ns, uint64_t interval_ns, const uint64_t blocked_ns[],

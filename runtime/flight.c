@@ -38,6 +38,7 @@ typedef struct {
 
 typedef struct {
     int n;                      // records, oldest first
+    int no_thumbs;              // a crash dump: the timing table only (no GPU readback in a dying process)
     uint64_t trig_frame, trig_interval_us;
     const char *why;
     char dir[PLAT_PATH_MAX];
@@ -235,7 +236,7 @@ static void dump_main(void *arg) {
     }
     uint8_t *have = calloc((size_t)j->n, 1);
     int n_thumbs = 0;
-    if (thumbs_on && have) {
+    if (thumbs_on && have && !j->no_thumbs) {
         if (!crc_table[1])
             for (uint32_t i = 0; i < 256; i++) {
                 uint32_t c = i;
@@ -290,11 +291,12 @@ static void dump_main(void *arg) {
     return;
 }
 
-static void start_dump(void) {
+static DumpJob *make_job(void) {
     int n = recorded < (uint64_t)ring_n ? (int)recorded : ring_n;
     DumpJob *j = n ? malloc(sizeof *j + sizeof(Rec) * (size_t)n) : NULL;
-    if (!j) return;
+    if (!j) return NULL;
     j->n = n;
+    j->no_thumbs = 0;
     j->trig_frame = trig_frame;
     j->trig_interval_us = trig_interval_us;
     j->why = trig_why;
@@ -303,7 +305,24 @@ static void start_dump(void) {
     plat_local_time(&st);
     snprintf(j->dir, sizeof j->dir, "%s/%04d%02d%02d-%02d%02d%02d-f%llu", base_dir, st.tm_year + 1900, st.tm_mon + 1,
              st.tm_mday, st.tm_hour, st.tm_min, st.tm_sec, (unsigned long long)trig_frame);
-    if (!plat_thread_spawn(dump_main, j, "flight dump", 0)) rt_log("flight: cannot start the dump thread"), free(j);
+    return j;
+}
+
+static void start_dump(void) {
+    DumpJob *j = make_job();
+    if (j && !plat_thread_spawn(dump_main, j, "flight dump", 0)) rt_log("flight: cannot start the dump thread"), free(j);
+}
+
+void flight_crash_dump(void) {
+    if (!flight_on || !ring || !recorded) return;
+    const Rec *last = &ring[(recorded - 1) % (uint64_t)ring_n];
+    trig_frame = last->frame;
+    trig_interval_us = last->interval_us;
+    trig_why = "crash";
+    DumpJob *j = make_job();
+    if (!j) return;
+    j->no_thumbs = 1;
+    dump_main(j);   // on the crashing thread: the process ends right after
 }
 
 static void trigger(uint64_t frame, uint64_t interval_ns, const char *why) {

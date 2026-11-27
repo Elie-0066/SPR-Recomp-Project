@@ -683,6 +683,74 @@ static void pin_subgroup32(VkPipelineShaderStageCreateInfo *st, VkPipelineShader
     st->pNext = rq;
 }
 
+// ---- crash capture: a driver that crashes compiling a pipeline (RADV's radv_shader_spirv_to_nir on a SPIR-V module it
+// could not parse, 2026-11-20) takes the process down with nothing in the log. Each thread keeps a copy of the final
+// SPIR-V of the modules it made for the pipeline it is building (the module's own copy is the driver's), and flags the
+// vkCreate*Pipelines call; main.c crash_handler calls vk_pipeline_crash_dump, which logs the stages and writes each to
+// logs/crash-<fnv>-<stage>.spv next to the executable (spirv-val / spirv-dis them). A few copies per build, freed after.
+enum { HELD_MAX = 4 };
+typedef struct { uint32_t *w; uint64_t n, fnv, origin; int stage; } HeldModule;
+static __thread HeldModule held[HELD_MAX];
+static __thread int held_n, held_building;
+
+static void held_clear(void) {
+    for (int i = 0; i < held_n; i++) free(held[i].w);
+    held_n = 0;
+}
+
+static void held_add(const GfxShader *src, const uint32_t *w, uint64_t words) {
+    if (held_n == HELD_MAX) {   // a build that stopped before its pipeline call: drop the oldest
+        free(held[0].w);
+        memmove(held, held + 1, sizeof held[0] * (HELD_MAX - 1));
+        held_n--;
+    }
+    uint32_t *copy = malloc((size_t)words * 4);
+    if (!copy) return;
+    memcpy(copy, w, (size_t)words * 4);
+    held[held_n++] = (HeldModule){copy, words, src ? gfx_shader_spirv_fnv(src) : 0, src ? gfx_shader_origin(src) : 0,
+                                  src ? gfx_shader_stage(src) : -1};
+}
+
+// TOTK_CRASH_TEST=pipeline (debug): a fault inside the C library during the first pipeline build, the way a driver
+// crash looks, to check the capture.
+static void crash_test(void) {
+    static int t = -1;
+    if (t < 0) {
+        const char *e = getenv("TOTK_CRASH_TEST");
+        t = e && !strcmp(e, "pipeline");
+    }
+    static volatile int32_t fired;
+    if (t && !plat_xchg32(&fired, 1)) {   // once: the prewarm builds on many threads at a time
+        void *(*volatile fill)(void *, int, size_t) = memset;
+        fill((void *)(uintptr_t)0x40, 0, 64);
+    }
+}
+
+#define HELD_BUILD(call) (held_building = 1, crash_test(), (call)); held_building = 0, held_clear()
+
+int vk_pipeline_crash_dump(void) {
+    if (!held_building) return 0;
+    static const char *const stage_name[] = {"vs", "tcs", "tes", "gs", "fs", "cs"};   // GFX_STAGE_*
+    rt_logf("  in the driver building a pipeline of %d stage(s) on this thread:\n", held_n);
+    static char dir[PLAT_PATH_MAX * 3], path[PLAT_PATH_MAX * 3 + 64];   // not on the signal stack
+    char *cut = plat_exe_path(dir, sizeof dir) ? plat_last_sep(dir) : NULL;
+    if (cut && (size_t)(cut - dir) + sizeof "/logs" <= sizeof dir) strcpy(cut, "/logs"), plat_file_mkdir_p(dir);
+    else cut = NULL;
+    for (int i = 0; i < held_n; i++) {
+        const HeldModule *h = &held[i];
+        const char *st = h->stage >= 0 && h->stage < 6 ? stage_name[h->stage] : "stage";
+        int saved = 0;
+        if (cut && snprintf(path, sizeof path, "%s/crash-%016llx-%s.spv", dir, (unsigned long long)h->fnv, st) < (int)sizeof path) {
+            PlatAppend *f = plat_append_open(path);
+            saved = f && plat_append_write(f, h->w, (size_t)h->n * 4);
+        }
+        rt_logf("    %s %016llx (origin %016llx), %llu words%s%s\n", st, (unsigned long long)h->fnv,
+                (unsigned long long)h->origin, (unsigned long long)h->n, saved ? ", final SPIR-V saved to " : "",
+                saved ? path : "");
+    }
+    return 1;
+}
+
 static VkShaderModule make_module_linked(const GfxShader *src, const uint32_t *w, uint64_t words, int geometry_chain) {
     uint64_t final_n = words;
     uint32_t *final = gfx_spirv_final(src, w, words, geometry_chain, clip_cull_limit(), &final_n);
@@ -690,6 +758,7 @@ static VkShaderModule make_module_linked(const GfxShader *src, const uint32_t *w
     VkShaderModuleCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = (size_t)words * 4, .pCode = w};
     VkShaderModule m = VK_NULL_HANDLE;
     VkResult r = vkCreateShaderModule(P.device, &ci, NULL, &m);
+    if (r == VK_SUCCESS) held_add(src, w, words);
     free(final);
     return r == VK_SUCCESS ? m : VK_NULL_HANDLE;
 }
@@ -1865,7 +1934,8 @@ static VkPipeline create_graphics(const VkPipeState *s, const GKey *k, const Lay
     if (k->fbl & 2) pi.flags |= VK_PIPELINE_CREATE_DEPTH_STENCIL_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
     pi.flags |= vk_pipeline_capture_flags();
     uint64_t p0 = perf_begin();
-    VkResult r = vkCreateGraphicsPipelines(P.device, P.cache, 1, &pi, NULL, &pipe);
+    VkResult r;
+    HELD_BUILD(r = vkCreateGraphicsPipelines(P.device, P.cache, 1, &pi, NULL, &pipe));
     perf_end(PERF_PIPE, p0);   // counts on the render thread only, so background builds stay out of it
     if (r != VK_SUCCESS) {
         rt_log("vk_pipeline: vkCreateGraphicsPipelines failed (%d)", (int)r);
@@ -2022,7 +2092,9 @@ static VkPipeline lib_create(int kind, const VkPipeState *s, const GKey *k, VkPi
         ri.depthAttachmentFormat = (VkFormat)k->depth, ri.stencilAttachmentFormat = (VkFormat)k->stencil;
         pi.pColorBlendState = &cb, pi.pMultisampleState = &ms;
     }
-    if (vkCreateGraphicsPipelines(P.device, P.cache, 1, &pi, NULL, &pipe) != VK_SUCCESS) pipe = VK_NULL_HANDLE;
+    VkResult gr;
+    HELD_BUILD(gr = vkCreateGraphicsPipelines(P.device, P.cache, 1, &pi, NULL, &pipe));
+    if (gr != VK_SUCCESS) pipe = VK_NULL_HANDLE;
 out:
     if (m) vkDestroyShaderModule(P.device, m, NULL);
     free(patched);
@@ -2977,7 +3049,9 @@ static VkPipeline compute_create(const GfxShader *cs, const Layout *l) {
         fclose(dump);
     }
     double t0 = now_ms();
-    if (vkCreateComputePipelines(P.device, P.cache, 1, &ci, NULL, &pipe) != VK_SUCCESS) pipe = VK_NULL_HANDLE;
+    VkResult cr;
+    HELD_BUILD(cr = vkCreateComputePipelines(P.device, P.cache, 1, &ci, NULL, &pipe));
+    if (cr != VK_SUCCESS) pipe = VK_NULL_HANDLE;
     if (now_ms() - t0 > 500) rt_log("vk_pipeline: that compute pipeline took %.0f ms", now_ms() - t0);
     vkDestroyShaderModule(P.device, m, NULL);
     return pipe;

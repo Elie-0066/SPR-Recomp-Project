@@ -28,6 +28,7 @@
 #include "aoc_romfs.h"
 #include "cfg.h"
 #include "gfx.h"
+#include "flight.h"
 #include "host.h"
 #include "platform/platform.h"
 #include "sha256.h"
@@ -244,16 +245,29 @@ static uint64_t lifted_function(uintptr_t rip) {
     return lo ? fn_rev[lo - 1].guest : 0;
 }
 
+int vk_pipeline_crash_dump(void);   // vk_pipeline.c: the pipeline this thread was building, if any
+
 static void crash_handler(const PlatCrash *x) {
     static volatile int32_t busy;
-    if (plat_xchg32(&busy, 1)) plat_exit(71);
+    if (plat_xchg32(&busy, 1)) {   // another thread is writing its report: let it finish (a driver fault can hit two)
+        plat_sleep_ms(10000);
+        plat_exit(71);
+    }
     char d[160];
     uintptr_t rip = x->rip;
-    rt_logf("FATAL: %s (%#x) at host %p (totk+%#llx)", x->what, x->code, (void *)rip, (unsigned long long)x->offset);
+    if (x->module) rt_logf("FATAL: %s (%#x) at host %p (%s+%#llx)", x->what, x->code, (void *)rip, x->module,
+                           (unsigned long long)x->offset);
+    else rt_logf("FATAL: %s (%#x) at host %p (totk+%#llx)", x->what, x->code, (void *)rip, (unsigned long long)x->offset);
     if (x->access >= 0)
         rt_logf(", %s address %#llx", x->access == 1 ? "writing" : x->access == 8 ? "executing" : "reading",
                 (unsigned long long)x->addr);
     rt_log_raw("\n", 1);
+    vk_pipeline_crash_dump();
+    if (x->module) {   // a driver's fault: logged; the default action follows (a core dump, as before this hook)
+        flight_crash_dump();
+        fflush(stderr);
+        return;
+    }
     uint64_t f = lifted_function(rip);
     if (f) rt_logf("  in lifted function f_%llx = %s\n", (unsigned long long)f, ldr_describe(f, d, sizeof d));
     for (int i = 0; i < x->nframes; i++) {   // abort and invalid parameter: where the host code called it
@@ -265,6 +279,7 @@ static void crash_handler(const PlatCrash *x) {
     Cpu *c = kern_cpu();
     if (c) rt_guest_dump(c);
     else rt_logf("  not on a guest thread\n");
+    flight_crash_dump();
     fflush(stderr);
     plat_exit(71);
 }
