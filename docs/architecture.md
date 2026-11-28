@@ -95,7 +95,10 @@ Every guest thread is a host thread. TotK assumes Horizon's scheduler: three app
 - Uniform snapshot. The game rewrites per-object uniform blocks on other threads soon after it submits the frame
   that reads them, while the replay still records it. At the start of a submission's replay every uniform range it
   binds from CPU-written pools is copied, and the draws bind the copy (`vk_usnap.c`, after MacNativeGames'
-  `TOTK_UBO_SNAPSHOT`); without it, late draws read another object's matrix.
+  `TOTK_UBO_SNAPSHOT`); without it, late draws read another object's matrix. The copies go to device-local memory
+  through the BAR when the device has it; `TOTK_USNAP_HOST=1` puts them in host memory instead, for GPUs without
+  resizable BAR behind a narrow link (a Thunderbolt eGPU), where each copy is otherwise a write across the link. It is
+  off by default because no timing has shown a gain yet.
 - Driver data. The NVN driver keeps a per-stage constant bank (c0) that shaders read for things like point size, dispatch size and base instance. The back end fills it the way the driver does.
 - NVN 2 (Switch 2). Raiders, like Bananza, calls NVN 2 and ships Ampere shaders: `nvn_api_nvn2.c` answers the NVN 2
   procs, and Eglantine's GPL lowering (`runtime/third_party/eglantine/`) turns each Ampere stage into the Maxwell form the

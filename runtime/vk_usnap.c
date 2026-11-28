@@ -85,7 +85,13 @@ static Arena *arena_get(uint64_t need) {
     VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = a->size,
                              .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT};
     // Device-local through the BAR when the device has it (the GPU reads constants on every draw), else host memory.
-    VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+    // TOTK_USNAP_HOST=1 puts the arenas in host memory instead. Without resizable BAR, and over a narrow link such as
+    // a Thunderbolt eGPU, the BAR is a 256 MiB window across the cable, so every byte the copy below writes is a
+    // write over the link; ZA Recomp measured that same placement for its upload ring at 6 of 14.5 us per draw on an
+    // RTX 3060 over Thunderbolt 3. Only "1" switches it: arenas are reused across submissions, so "ab" is not offered.
+    static int host = -1;
+    if (host < 0) host = rt_knob("USNAP_HOST", "0") == 1;
+    VmaAllocationCreateInfo ai = {.usage = host ? VMA_MEMORY_USAGE_AUTO_PREFER_HOST : VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
                                   .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
                                            VMA_ALLOCATION_CREATE_MAPPED_BIT};
     VmaAllocationInfo info;
@@ -98,7 +104,9 @@ static Arena *arena_get(uint64_t need) {
     }
     a->map = info.pMappedData;
     __atomic_fetch_add(&arena_total, a->size, __ATOMIC_RELAXED);
-    rt_log("vk_usnap: new arena of %.1f MiB", a->size / 1048576.0);
+    VkMemoryPropertyFlags f = vk_ctx()->mem_props.memoryTypes[info.memoryType].propertyFlags;
+    rt_log("vk_usnap: new arena of %.1f MiB in memory type %u (%s, TOTK_USNAP_HOST=%d)", a->size / 1048576.0,
+           info.memoryType, f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT ? "device-local" : "host", host);
     return a;
 }
 
